@@ -180,6 +180,8 @@ mod tests {
     #[test]
     fn rejects_large_unsigned_integers_not_silently_rounded_to_float() {
         assert!(parse_document(r#"{"x":9223372036854775808}"#, false).is_err());
+        assert!(parse_document(r#"{"x":-9223372036854775809}"#, false).is_err(),
+            "out-of-range negative integer must not be rounded into an f64");
         assert!(parse_document(r#"{"x":1e1000}"#, false).is_err());
     }
 
