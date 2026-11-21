@@ -112,3 +112,38 @@ Node uses `node:tls`, `minVersion: "TLSv1.3"`, `maxVersion: "TLSv1.3"`, `rejectU
 `TlsContract.cs` and `tests/tls.test.mjs` launch the **real Rust executable** on Linux, macOS and Windows and verify successful TLS HELLO/PING, nested typed binary CRUD (bytes, references, i64, Unicode), concurrent requests, collection read/write denial, wrong CA/SAN, malformed credential, plaintext-to-TLS refusal and persistence across separate server processes. Additional **public** expiry fixtures ensure both languages reject server certificates whose notBefore/notAfter window excludes the current date, even when CA and SAN match. An RSWP Unauthorized response is explicitly flushed before the Rust server closes its TLS stream (#54).
 
 **These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. No mTLS, centralized identities, certificate/key rotation, revocation workflow, secure connection pools, released NuGet/npm SDK packages or service discovery exist. [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remains open.
+
+## mTLS principal policy contract (#57 — validation only)
+
+An explicit versioned client-principal policy file is now recognized by the
+`rpc-serve --mtls-policy PRIVATE_PATH` command-line parser. **This mode ALWAYS
+refuses to start**, even if the policy is valid. It is a deliberately
+fail-closed schema/permissions validation milestone, **not mTLS support**.
+Never assume a server using `--mtls-policy` has verified a client certificate.
+
+The first line must be `rystem-mtls-principal-acl-v1`. Each nonempty subsequent
+line must have exactly three ASCII fields separated by one space:
+
+```text
+rystem-mtls-principal-acl-v1
+spiffe://rystemdb.local/client/reader orders r
+spiffe://rystemdb.local/client/writer orders rw
+```
+
+The URI is a **planned exact-match SPIFFE-style URI SAN identity**, not a CN,
+HTTP credential, or human-readable display name. The fixed experimental prefix
+is `spiffe://rystemdb.local/client/` followed by 1–64 lowercase ASCII letters,
+digits, underscores or hyphens. Percent encoding, extra path segments, queries,
+fragments and wildcards are rejected; there is no identity normalization. The
+collection syntax and `r`/`w`/`rw` semantics mirror the local token policy.
+At most 128 rules in a nonempty, regular, UTF-8 ASCII file of at most 64 KiB.
+Duplicate (principal, collection) rules and insecure Unix permissions/symlinks
+are rejected without echoing principals in errors.
+
+This is **only a future contract**: no code yet extracts verified client URI
+SANs, sets up Rustls client-certificate verification, enforces the policy on
+requests or intersects it with HELLO bearer-token grants. These are remaining
+[#56](https://github.com/KeyserDSoze/RystemDatabase/issues/56) and
+[#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) acceptance gates.
+No non-loopback listener or production remote access is enabled. The current
+policy parser does not enforce Windows NTFS access-control lists.

@@ -4,7 +4,7 @@
 //! The server owns ONE DocumentStore for its whole lifetime, and all clients
 //! share it behind a mutex. A bounded fixed worker pool prevents unlimited
 //! threads from untrusted socket connections. Not a public network database.
-use crate::auth::{AuthPolicy, Grant};
+use crate::auth::{load_mtls_principal_policy, AuthPolicy, Grant};
 use crate::tls;
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
 use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
@@ -30,7 +30,8 @@ const UNAUTHORIZED: u16 = 6;
 /// Starts the loopback-only binary service. The default health-only HTTP server
 /// remains a separate CLI command and keeps its original behavior.
 pub fn run(args: &[String]) -> Result<(), String> {
-    let (mut data, mut listen, mut auth_file, mut tls_cert, mut tls_key) = (None, None, None, None, None);
+    let (mut data, mut listen, mut auth_file, mut tls_cert, mut tls_key, mut mtls_policy) =
+        (None, None, None, None, None, None);
     let mut pos = 0;
     while pos < args.len() {
         let flag = args[pos].as_str();
@@ -41,6 +42,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--auth-file" => &mut auth_file,
             "--tls-cert" => &mut tls_cert,
             "--tls-key" => &mut tls_key,
+            "--mtls-policy" => &mut mtls_policy,
             _ => return Err(format!("unknown rpc-serve argument: {flag}")),
         };
         if target.replace(value.as_str()).is_some() {
@@ -56,6 +58,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
     // attempted bind cannot even create a new database directory.
     if !addr.ip().is_loopback() {
         return Err("rpc-serve is restricted to loopback; secure remote transport not yet enabled".into());
+    }
+
+    // An mTLS principal policy must NEVER silently enable a bearer-only TLS
+    // server. Validate the canonical, private policy file before any storage
+    // creation, then deliberately reject until verified client X.509 URI SAN
+    // identities and permission intersection are actually implemented.
+    if let Some(path) = mtls_policy {
+        load_mtls_principal_policy(Path::new(path))?;
+        return Err("mTLS client certificate authentication is not yet enabled".into());
     }
 
     // Fail closed on invalid credentials/permissions BEFORE binding the socket
