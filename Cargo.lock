@@ -58,6 +58,9 @@ dependencies = [
 [[package]]
 name = "rystemdb-protocol"
 version = "0.1.2"
+dependencies = [
+ "rystemdb-core",
+]
 
 [[package]]
 name = "rystemdb-storage"

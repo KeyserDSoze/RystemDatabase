@@ -7,6 +7,7 @@
 //! On the wire (all multi-byte integers BE):
 //! magic[4]="RSWP", major=1, minor=0, kind[1], op[1],
 //! status[2], header_len[2]=24, request_id[8], payload_len[4], payload[N].
+pub mod crud;
 use std::fmt;
 use std::io::{self, Read, Write};
 

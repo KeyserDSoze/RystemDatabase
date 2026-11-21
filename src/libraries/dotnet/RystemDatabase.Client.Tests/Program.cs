@@ -34,3 +34,45 @@ for (int i = 0; i < golden.Length; i++)
     }
 }
 Console.WriteLine("Rystem .NET wire protocol conformance: PASS");
+
+
+// RED: independent .NET CRUD body compatibility tests against Rust wire literals.
+var expectedKey = new byte[] { 0,5,117,115,101,114,115,0,3,117,52,50 };
+Check(RystemCrudKey.Encode("users","u42").AsSpan().SequenceEqual(expectedKey),
+    "C# CRUD key must be byte-identical to Rust/TypeScript golden vector");
+var parsed = RystemCrudKey.Decode(expectedKey);
+Check(parsed.Collection == "users" && parsed.Id == "u42" && parsed.Document.Length == 0,
+    "C# decode of known GET body failed");
+
+var unicodeKey = new byte[] { 0,6,111,114,100,101,114,115,0,4,240,159,166,138 };
+Check(RystemCrudKey.Encode("orders","🦊").AsSpan().SequenceEqual(unicodeKey),
+    "C# UTF-8 ID must use byte length not UTF-16 length");
+var documentBytes = new byte[] {
+    82,68,66,0,1,8,0,0,0,1,0,0,0,1,110,3,0,0,0,0,0,0,0,42
+};
+var put = unicodeKey.Concat(documentBytes).ToArray();
+var putDecoded = RystemCrudKey.Decode(put);
+Check(putDecoded.Id == "🦊" && putDecoded.Collection == "orders" &&
+    putDecoded.Document.AsSpan().SequenceEqual(documentBytes),
+    "C# decode must preserve raw typed binary document bytes");
+
+foreach (var invalidCollection in new[] { "", "bad/name", "a b", "é", new string('x',129) })
+{
+    try { RystemCrudKey.Encode(invalidCollection, "id"); throw new Exception("Invalid collection accepted"); }
+    catch (ArgumentException) { /* expected */ }
+}
+foreach (var invalidId in new[] { "", "\n", "\u0085", new string('x',1024) })
+{
+    try { RystemCrudKey.Encode("users", invalidId); throw new Exception("Invalid ID accepted"); }
+    catch (ArgumentException) { /* expected */ }
+}
+for (int n = 0; n < expectedKey.Length; n++)
+{
+    try { RystemCrudKey.Decode(expectedKey.AsSpan(0,n)); throw new Exception("Incomplete key accepted"); }
+    catch (ArgumentException) { /* expected */ }
+}
+var invalidUtf8 = expectedKey.ToArray();
+invalidUtf8[10] = 255;
+try { RystemCrudKey.Decode(invalidUtf8); throw new Exception("Invalid UTF-8 accepted"); }
+catch (ArgumentException) { /* expected */ }
+Console.WriteLine("Rystem .NET CRUD key conformance: PASS");

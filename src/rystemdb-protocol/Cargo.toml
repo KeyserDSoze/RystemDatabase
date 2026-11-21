@@ -9,3 +9,6 @@ repository.workspace = true
 
 [lib]
 path = "src/lib.rs"
+
+[dev-dependencies]
+rystemdb-core = { path = "../rystemdb-core" }
