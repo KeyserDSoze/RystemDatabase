@@ -39,9 +39,25 @@ jobs:
           node-version: '22'
       - run: npm test
         working-directory: npm/cli
+      - name: TypeScript RSWP cross-language wire contract
+        run: npm test
+        working-directory: src/libraries/typescript/rystemdb-client
       - name: Validate npm package
         run: npm pack --dry-run
         working-directory: npm/cli
+  dotnet:
+    name: .NET RSWP conformance (SDK + EF scaffold)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: .NET protocol conformance
+        run: dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
+      - name: Build EF Core library scaffold
+        run: dotnet build src/libraries/dotnet/RystemDatabase.EntityFrameworkCore/RystemDatabase.EntityFrameworkCore.csproj --configuration Release
+
   docker:
     name: Docker build + basic smoke
     runs-on: ubuntu-latest

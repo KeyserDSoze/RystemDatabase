@@ -1,0 +1,9 @@
+{
+  "name": "@rystemdb/client",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "description": "Experimental TypeScript RSWP wire codec; remote client pending",
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --experimental-strip-types --test tests/*.test.mjs" }
+}
