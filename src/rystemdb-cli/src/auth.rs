@@ -159,7 +159,10 @@ fn parse_mtls_principal_policy(contents: &str) -> Result<Vec<(String, Grant)>, S
         return Err(INVALID_MTLS_POLICY.into());
     }
     let mut rules: Vec<(String, Grant)> = Vec::new();
-    for line in lines.filter(|line| !line.is_empty()) {
+    for line in lines {
+        if line.is_empty() {
+            return Err(INVALID_MTLS_POLICY.into());
+        }
         if rules.len() >= MAX_RULES {
             return Err(INVALID_MTLS_POLICY.into());
         }
@@ -282,6 +285,7 @@ mod tests {
             "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/a orders read\n",
             "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/a  orders r\n",
             "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/a orders rw extra\n",
+            "rystem-mtls-principal-acl-v1\n\nspiffe://rystemdb.local/client/a orders r\n",
             "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/a orders r\nspiffe://rystemdb.local/client/a orders w\n",
         ] {
             assert!(parse_mtls_principal_policy(body).is_err());

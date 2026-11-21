@@ -58,6 +58,7 @@ fn tdd_mtls_policy_validated_but_never_starts_without_verified_certificate_ident
         ("version", "rystem-mtls-principal-acl-v2\nspiffe://rystemdb.local/client/reader orders r\n"),
         ("empty", "rystem-mtls-principal-acl-v1\n"),
         ("duplicate", "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/reader orders r\nspiffe://rystemdb.local/client/reader orders w\n"),
+        ("blank-line", "rystem-mtls-principal-acl-v1\n\nspiffe://rystemdb.local/client/reader orders r\n"),
         ("wildcard", "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/* orders rw\n"),
         ("uri-query", "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/reader?x=1 orders r\n"),
         ("noncanonical", "rystem-mtls-principal-acl-v1\nSPIFFE://rystemdb.local/client/reader orders r\n"),
