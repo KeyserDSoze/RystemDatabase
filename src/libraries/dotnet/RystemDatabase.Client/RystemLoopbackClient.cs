@@ -57,7 +57,7 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
             var client = new RystemLoopbackClient(tcp);
             var hello = await client.CallAsync(WireOperation.Hello, [1, 0], cancellationToken)
                 .ConfigureAwait(false);
-            if (hello.Status != 0 || !hello.Payload.AsSpan().SequenceEqual([1, 0]))
+            if (hello.Status != 0 || !hello.Payload.AsSpan().SequenceEqual(new byte[] { 1, 0 }))
                 throw new InvalidDataException("Rust server rejected RSWP v1 HELLO");
             return client;
         }
