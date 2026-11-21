@@ -21,8 +21,8 @@ jobs:
         run: rustc --version
       - name: Check workspace and unit/integration tests
         run: cargo test --workspace --locked --all-targets
-      - name: Process-crash recovery matrix (feature-gated)
-        run: cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1
+      - name: Storage failure and process-crash recovery matrix (feature-gated)
+        run: cargo test -p rystemdb-storage --locked --features fault-injection --tests -- --test-threads=1
       - name: Clippy (default production features)
         run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - name: Clippy (test fault-injection enabled)
