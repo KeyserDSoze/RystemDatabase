@@ -119,7 +119,7 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
             throw new ArgumentException("Invalid TLS root CA PEM length", nameof(trustedCaFile));
 
         var secret = token.ToArray();
-        using var ca = X509Certificate2.CreateFromPemFile(trustedCaFile);
+        using var ca = X509CertificateLoader.LoadCertificateFromFile(trustedCaFile);
         var chainPolicy = new X509ChainPolicy
         {
             TrustMode = X509ChainTrustMode.CustomRootTrust,
