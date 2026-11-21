@@ -232,6 +232,10 @@ impl DocumentStore {
     }
 
     fn try_append(&mut self, frame: &[u8]) -> Result<Location, StoreError> {
+        // Fault hooks are compiled ONLY for explicitly feature-enabled tests.
+        // Production/default builds do not read env vars or call exit().
+        #[cfg(feature = "fault-injection")]
+        fault_if("before_append");
         let offset = self.active.metadata()?.len();
         if offset > 0 && offset.saturating_add(frame.len() as u64) > self.segment_limit {
             let next = self.active_id.checked_add(1).ok_or_else(|| {
@@ -243,11 +247,40 @@ impl DocumentStore {
             let new_active = create_segment(&self.root, next)?;
             self.active = new_active;
             self.active_id = next;
+            #[cfg(feature = "fault-injection")]
+            fault_if("after_rotate");
         }
         let offset = self.active.metadata()?.len();
+        #[cfg(feature = "fault-injection")]
+        if test_fault_is("partial_frame") {
+            // Persist an intentionally torn payload, then exit immediately
+            // without destructors. Only test builds can take this path.
+            self.active.write_all(&frame[..frame.len() / 2])?;
+            self.active.sync_data()?;
+            std::process::exit(97);
+        }
         self.active.write_all(frame)?;
+        #[cfg(feature = "fault-injection")]
+        fault_if("after_frame_before_sync");
         self.active.sync_data()?;
+        #[cfg(feature = "fault-injection")]
+        fault_if("after_sync_before_publish");
         Ok(Location { segment: self.active_id, offset })
+    }
+}
+
+
+#[cfg(feature = "fault-injection")]
+fn test_fault_is(point: &str) -> bool {
+    std::env::var("RYSTEMDB_TEST_CRASH_POINT").as_deref() == Ok(point)
+}
+
+#[cfg(feature = "fault-injection")]
+fn fault_if(point: &str) {
+    if test_fault_is(point) {
+        // This deliberately bypasses unwinding and Drop. It models a killed
+        // process, NOT sudden power loss or failed physical disk persistence.
+        std::process::exit(97);
     }
 }
 
