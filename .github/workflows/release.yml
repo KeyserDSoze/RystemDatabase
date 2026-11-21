@@ -170,3 +170,58 @@ jobs:
           file: docker/Dockerfile
           push: true
           tags: ghcr.io/keyserdsoze/rystemdatabase:${{ needs.prepare.outputs.tag }}
+
+  install-smoke:
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, github-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install released native binary and exercise CLI (Linux/macOS)
+        if: runner.os != 'Windows'
+        env:
+          RYSTEMDB_VERSION: ${{ needs.prepare.outputs.tag }}
+          RYSTEMDB_INSTALL_DIR: ${{ runner.temp }}/rystemdb-bin
+        shell: bash
+        run: |
+          bash scripts/install.sh
+          bin="$RYSTEMDB_INSTALL_DIR/rystemdb"
+          test "$("$bin" --version)" = "rystemdb ${RYSTEMDB_VERSION#v}"
+          data="$(mktemp -d)"
+          trap 'rm -rf "$data"' EXIT
+          printf '{"name":"Ada"}' | "$bin" document put --data "$data" --collection users --id u42 --json -
+          result="$("$bin" document get --data "$data" --collection users --id u42)"
+          test "$result" = '{"name":"Ada"}'
+          "$bin" document delete --data "$data" --collection users --id u42
+          if "$bin" document get --data "$data" --collection users --id u42; then
+            echo "deleted document still available" >&2
+            exit 1
+          fi
+      - name: Install released native binary and exercise CLI (Windows)
+        if: runner.os == 'Windows'
+        env:
+          VERSION_TAG: ${{ needs.prepare.outputs.tag }}
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'rystemdb-bin'
+          & ./scripts/install.ps1 -Version $env:VERSION_TAG -InstallDir $installDir
+          $bin = Join-Path $installDir 'rystemdb.exe'
+          $actualVersion = & $bin --version
+          if ($actualVersion -ne ('rystemdb ' + $env:VERSION_TAG.TrimStart('v'))) {
+            throw "Wrong installed Rystem version: $actualVersion"
+          }
+          $data = Join-Path $env:RUNNER_TEMP 'rystemdb-data'
+          '{"name":"Ada"}' | & $bin document put --data $data --collection users --id u42 --json -
+          if ($LASTEXITCODE -ne 0) { throw 'put failed' }
+          $found = & $bin document get --data $data --collection users --id u42
+          if ($LASTEXITCODE -ne 0 -or $found -ne '{"name":"Ada"}') {
+            throw "Windows get failed: $found"
+          }
+          & $bin document delete --data $data --collection users --id u42
+          if ($LASTEXITCODE -ne 0) { throw 'delete failed' }
+          & $bin document get --data $data --collection users --id u42
+          if ($LASTEXITCODE -eq 0) { throw 'Deleted document was still found' }
