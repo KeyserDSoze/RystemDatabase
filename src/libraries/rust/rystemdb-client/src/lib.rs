@@ -149,27 +149,11 @@ impl LocalClient {
     }
 }
 
-/// Provisional RSWP v1 CRUD key: BE u16 collection length + ASCII collection
-/// + BE u16 ID length + UTF-8 ID; see docs/RPC_SERVER.md.
-///
-/// Move into the shared protocol crate with independent SDK golden vectors
-/// as part of #38 before treating this body encoding as stable.
+/// Use the exact shared RSWP v1 key codec. No duplicate validation,
+/// UTF-8 encoding or byte-length handling in the client.
 fn encode_key(collection: &str, id: &str) -> Result<Vec<u8>, ClientError> {
-    if collection.is_empty() || collection.len() > 128
-        || !collection.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        || id.is_empty() || id.chars().any(char::is_control)
-        || collection.len() + 1 + id.len() > 1024
-    {
-        return Err(ClientError::InvalidKey);
-    }
-    let mut output = Vec::with_capacity(4 + collection.len() + id.len());
-    let coll_len = u16::try_from(collection.len()).map_err(|_| ClientError::InvalidKey)?;
-    let id_len = u16::try_from(id.len()).map_err(|_| ClientError::InvalidKey)?;
-    output.extend_from_slice(&coll_len.to_be_bytes());
-    output.extend_from_slice(collection.as_bytes());
-    output.extend_from_slice(&id_len.to_be_bytes());
-    output.extend_from_slice(id.as_bytes());
-    Ok(output)
+    rystemdb_protocol::crud::encode_key(collection, id)
+        .map_err(|_| ClientError::InvalidKey)
 }
 
 #[cfg(test)]

@@ -180,26 +180,12 @@ fn handle_document(request: &Frame, db: &Mutex<DocumentStore>) -> (u16, Vec<u8>,
     }
 }
 
-/// v1 CRUD body layout:
-/// u16 BE collection_length, ASCII collection (1..128 [A-Za-z0-9_-]),
-/// u16 BE id_length, UTF-8 ID (nonempty, no control chars),
-/// followed by RDB\0 typed document bytes only for PUT.
-/// Returns the composite storage key and offset of the typed document body.
+/// Parse using the shared RSWP binary key codec, retaining the offset
+/// of an optional typed PUT document body. No duplicate key grammar.
 fn parse_key(bytes: &[u8]) -> Option<(String, usize)> {
-    let collection_len = u16::from_be_bytes(bytes.get(..2)?.try_into().ok()?) as usize;
-    if !(1..=128).contains(&collection_len) { return None; }
-    let collection_bytes = bytes.get(2..2+collection_len)?;
-    if !collection_bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-') {
-        return None;
-    }
-    let offset = 2 + collection_len;
-    let id_len = u16::from_be_bytes(bytes.get(offset..offset+2)?.try_into().ok()?) as usize;
-    if id_len == 0 || collection_len + 1 + id_len > 1024 { return None; }
-    let begin = offset + 2;
-    let id = std::str::from_utf8(bytes.get(begin..begin+id_len)?).ok()?;
-    if id.chars().any(char::is_control) { return None; }
-    let collection = std::str::from_utf8(collection_bytes).ok()?;
-    Some((format!("{collection}/{id}"), begin+id_len))
+    let parsed = rystemdb_protocol::crud::decode_key(bytes).ok()?;
+    let offset = bytes.len() - parsed.document.len();
+    Some((format!("{}/{}", parsed.collection, parsed.id), offset))
 }
 
 #[cfg(test)]
