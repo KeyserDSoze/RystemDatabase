@@ -70,7 +70,7 @@ impl From<CodecError> for ClientError {
 /// server. This is synchronous, not pooled, multi-connection or TLS capable.
 enum Transport {
     Plain(TcpStream),
-    Tls(rustls::StreamOwned<rustls::ClientConnection, TcpStream>),
+    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
 }
 impl Read for Transport {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
@@ -186,7 +186,7 @@ impl LocalClient {
         if connection.protocol_version() != Some(rustls::ProtocolVersion::TLSv1_3) {
             return Err(ClientError::TlsConfig);
         }
-        let stream = Transport::Tls(rustls::StreamOwned::new(connection, socket));
+        let stream = Transport::Tls(Box::new(rustls::StreamOwned::new(connection, socket)));
         let mut client = Self { stream, request_id: 1 };
         client.finish_hello(Some(token))?;
         Ok(client)
