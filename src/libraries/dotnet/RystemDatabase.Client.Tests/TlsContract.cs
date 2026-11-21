@@ -104,6 +104,23 @@ internal static class TlsContract
                     RystemRdbCodec.Encode(persisted).AsSpan().SequenceEqual(RystemRdbCodec.Encode(Document())),
                     "TLS restart lost persisted binary data");
             }
+            // The chain and SAN are valid, but leaf validity dates are not:
+            // .NET must reject both EXPIRED and NOT-YET-VALID certificates.
+            var validityRoot = Path.Combine(fixtures, "validity-root-ca.pem");
+            var validityKey = Path.Combine(root, "validity-server-key.pem");
+            File.Copy(Path.Combine(fixtures, "validity-server-key.pem"), validityKey);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(validityKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            foreach (var kind in new[] { "expired", "future" })
+            {
+                var wrongDateCert = Path.Combine(root, kind + "-server-cert.pem");
+                File.Copy(Path.Combine(fixtures, kind + "-server-cert.pem"), wrongDateCert);
+                await using var invalidServer = await RealTlsServer.StartAsync(
+                    binary, Path.Combine(root, kind + "-store"), auth, wrongDateCert, validityKey);
+                await RejectAuthenticationAsync(() => RystemLoopbackClient.ConnectTlsAsync(
+                    IPAddress.Loopback, invalidServer.Port, "localhost", validityRoot, ReadToken),
+                    kind + " server certificate");
+            }
             Console.WriteLine("Rystem .NET verified TLS1.3/native-Rust TCP integration: PASS");
         }
         finally

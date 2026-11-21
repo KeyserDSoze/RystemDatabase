@@ -115,3 +115,33 @@ test("TDD RED #52: Node TLS API refuses remote targets and malformed credentials
     host:"127.0.0.1",port:8790,serverName:"localhost",ca:"abc",token:new Uint8Array(31),
   }),/32/i);
 });
+
+test("TDD #52: TLS client rejects expired and not-yet-valid SAN certificates",{
+  skip:!process.env.RYSTEMDB_BINARY,timeout:60000,
+},async()=>{
+  const root=await mkdtemp(join(tmpdir(),"rystem-tls-time-"));
+  let server;
+  try {
+    const acl=join(root,"acl.txt"),key=join(root,"key.pem");
+    const ca=await readFile(join(fixtures,"validity-root-ca.pem"),"utf8");
+    await writeFile(acl,"11".repeat(32)+" orders r\n",{mode:0o600});
+    await writeFile(key,await readFile(join(fixtures,"validity-server-key.pem")),{mode:0o600});
+    for(const kind of ["expired","future"]) {
+      const cert=join(root,kind+"-cert.pem");
+      await writeFile(cert,await readFile(join(fixtures,kind+"-server-cert.pem")));
+      try {
+        server=await startNative(process.env.RYSTEMDB_BINARY,
+          join(root,kind+"-store"),acl,cert,key);
+        await assert.rejects(RystemLocalClient.connectTls({
+          host:"127.0.0.1",port:server.port,serverName:"localhost",ca,token:tokenR,
+        }),error=>/expired|valid|certificate|CERT_/i.test(String(error)),
+          kind+" certificate unexpectedly accepted");
+      } finally {
+        if(server){await stopNative(server);server=undefined;}
+      }
+    }
+  } finally {
+    if(server)await stopNative(server);
+    await rm(root,{recursive:true,force:true});
+  }
+});
