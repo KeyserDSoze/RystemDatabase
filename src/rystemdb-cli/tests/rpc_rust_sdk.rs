@@ -56,8 +56,8 @@ fn tdd_rust_sdk_end_to_end_typed_crud_with_same_connection() {
     client.put("orders", "ord:1", &doc).unwrap();
     assert_eq!(client.get("orders", "ord:1").unwrap(), Some(doc));
     assert_eq!(client.get("orders", "missing").unwrap(), None);
-    assert_eq!(client.delete("orders", "ord:1").unwrap(), true);
-    assert_eq!(client.delete("orders", "ord:1").unwrap(), false);
+    assert!(client.delete("orders", "ord:1").unwrap());
+    assert!(!client.delete("orders", "ord:1").unwrap());
     assert_eq!(client.get("orders", "ord:1").unwrap(), None);
 }
 
