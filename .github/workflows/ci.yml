@@ -23,7 +23,9 @@ jobs:
         run: cargo test --workspace --locked --all-targets
       - name: Process-crash recovery matrix (feature-gated)
         run: cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1
-      - name: Clippy
+      - name: Clippy (default production features)
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      - name: Clippy (test fault-injection enabled)
         run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
       - name: Release build
         run: cargo build --release --locked -p rystemdb-cli

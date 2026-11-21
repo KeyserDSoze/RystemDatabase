@@ -53,6 +53,7 @@ fn tdd_fault_child() {
 
 // A fresh child, using the same integration test executable, must be terminated
 // at the hook. Plain sequential function calls do not constitute crash testing.
+#[cfg(feature = "fault-injection")]
 fn crash_child(root: &Path, point: &str, operation: &str) {
     let output = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "tdd_fault_child", "--nocapture"])

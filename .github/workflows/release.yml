@@ -42,6 +42,7 @@ jobs:
       - run: cargo test --workspace --locked --all-targets
       - name: Run process-crash regression suite
         run: cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1
+      - run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
       - uses: actions/setup-node@v4
         with:
