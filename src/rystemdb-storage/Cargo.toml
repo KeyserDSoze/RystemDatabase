@@ -7,5 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+fault-injection = [] # Test-only; never enable in production releases.
+
 [dependencies]
 rystemdb-core = { path = "../rystemdb-core" }

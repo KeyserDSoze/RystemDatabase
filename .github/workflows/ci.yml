@@ -21,8 +21,10 @@ jobs:
         run: rustc --version
       - name: Check workspace and unit/integration tests
         run: cargo test --workspace --locked --all-targets
+      - name: Process-crash recovery matrix (feature-gated)
+        run: cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1
       - name: Clippy
-        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
       - name: Release build
         run: cargo build --release --locked -p rystemdb-cli
   npm:
