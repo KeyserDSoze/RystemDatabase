@@ -10,7 +10,7 @@ Local requirements: Rust 1.89.0+, Cargo, Node.js 20+, optionally Docker.
 
 ```sh
 cargo test --workspace --locked --all-targets
-cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1
+cargo test -p rystemdb-storage --locked --features fault-injection --tests -- --test-threads=1
 cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
 cd npm/cli && npm test
 docker build -f docker/Dockerfile -t rystemdb:local .

@@ -39,7 +39,7 @@ Read/write/delete/rollover/restart, malformed input, corruption and truncated-ta
 
 ## Crash semantics (test-only)
 
-`cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1` intentionally starts subprocesses which exit with code `97` at controlled storage boundaries, skipping Rust destructors. Only this test build reads `RYSTEMDB_TEST_CRASH_POINT`. Never build a release with `fault-injection` enabled. See [ADR 0003](../adr/0003-process-crash-fault-injection.md) and [crash test matrix](../tests/CRASH_GATE.md).
+`cargo test -p rystemdb-storage --locked --features fault-injection --tests -- --test-threads=1` intentionally starts subprocesses which exit with code `97` at controlled storage boundaries, skipping Rust destructors. Only this test build reads `RYSTEMDB_TEST_CRASH_POINT`. Never build a release with `fault-injection` enabled. See [ADR 0003](../adr/0003-process-crash-fault-injection.md) and [crash test matrix](../tests/CRASH_GATE.md).
 
 - Before append: existing acknowledged data survives; new value absent.
 - Mid-frame with a persisted partial payload: only the incomplete tail of the **last** segment is repaired.
@@ -48,6 +48,20 @@ Read/write/delete/rollover/restart, malformed input, corruption and truncated-ta
 - After new segment creation and directory sync: prior documents survive and new empty segment is reusable.
 
 These tests simulate **process termination**, not disk failure or sudden power loss.
+
+## Simulated filesystem operation failures (issue #20)
+
+In addition to abrupt process exits, `src/rystemdb-storage/tests/io_failure.rs` runs fault-enabled **child processes that stay alive after receiving a synthetic `StoreError::Io`**. A failed append/sync/segment-creation puts that open store into a permanently **poisoned** state; every later mutation, including a no-op DELETE, returns `StoreError::Poisoned`. The store must be closed and reopened to rebuild a verified index from binary frames.
+
+- `io_before_append`: reject before writing; previously acknowledged data preserved.
+- `io_short_write`: persist a deliberately incomplete frame, return an injected I/O error, then truncate only the final incomplete tail during replay.
+- `io_sync_data`: simulate a failed data flush **before** the real flush; the full unsynced record may or may not be observed after recovery, but is never treated as partially valid.
+- `io_after_sync`: report an error after the successful flush but before index publication. Recovery must replay the fully durable PUT or DELETE even though the caller received an uncertain error.
+- `io_segment_create`: report an error before creating a rollover segment.
+- `io_segment_sync`: report an error after creating the new empty segment but before its file synchronization.
+- `io_segment_directory_sync`: report an error after syncing the new segment but before syncing its directory entry.
+
+The fault points **simulate the error return without forcing the underlying filesystem or hardware to genuinely fail**. They are compiled out of normal binaries, tested explicitly by the no-feature isolation test, and must never be enabled in shipped releases. This does **not** prove actual power-loss durability, Windows directory-entry behavior, or atomic multi-record transactions. See [ADR 0004](../adr/0004-io-failure-poisoning.md) and [test gate matrix](../tests/CRASH_GATE.md).
 
 ## Explicit limitations
 

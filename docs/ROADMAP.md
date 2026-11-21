@@ -15,6 +15,7 @@ All work is tracked by GitHub Issues, developed directly on main, with RED → G
 - [x] Rebuildable in-memory document ID → segment/offset lookup with restart replay, plus incomplete final tail truncation
 - [x] Cooperative cross-process single-writer lock with tests for abrupt process exit
 - [x] Test-only deterministic process-crash injection at six append/sync/rollover boundaries (#18)
+- [x] Synthetic filesystem I/O error returns with poisoned-writer replay contracts (#20)
 - [ ] Physical power-loss testing, fault-tolerant durable index publication, compaction and recovery (#2, #17)
 - [x] Embedded source API: put/get/delete (overwrite via append) typed nested values; no network API yet
 
