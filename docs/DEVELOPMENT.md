@@ -15,7 +15,7 @@ cd npm/cli && npm test
 docker build -f docker/Dockerfile -t rystemdb:local .
 ```
 
-Checks currently exercise the codec and CLI foundation only. The project does **not** yet have a persistent database or transaction tests; each future feature must introduce its own RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
+Checks currently exercise the codec and CLI foundation only. The project now has experimental append-only persistent document segments and contract tests, but **no cross-process writer lock, transactional index, multi-document transaction or production-grade crash guarantees**; each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
 
 Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/release/rystemdb --help`. On Windows use `target\\release\\rystemdb.exe`.
 

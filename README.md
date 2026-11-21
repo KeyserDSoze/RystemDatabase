@@ -2,7 +2,7 @@
 
 **Hybrid document + relational + analytical database, built in Rust.**
 
-> **Status: foundation preview only.** A nested typed binary document codec and minimal health-only CLI exist. There is **no durable storage, data API, indexes, SQL, MVCC, or production deployment** yet. Packaging workflows are prepared; a main push automatically attempts a one-time prerelease for a new version. Publication must be independently verified.
+> **Status: experimental foundation.** A nested typed binary codec, an embedded append-only document segment library and a minimal health-only CLI exist. **The server does not expose storage**, and there are no transactional indexes, SQL, MVCC, enforced multi-process writer locks or production guarantees. `v0.1.1` binaries predate the storage implementation; no new release is implied by ongoing `main` development.
 
 Rystem Database follows the top-level structure of [TemporalMark](https://github.com/KeyserDSoze/TemporalMark): `src/`, `tests/`, `docs/`, `adr/`, `scripts/`, `docker/`, `infra/`, `.github/`.
 
@@ -20,9 +20,26 @@ cargo run -p rystemdb-cli -- serve
 # then in another terminal: curl http://127.0.0.1:8787/healthz
 ```
 
-## Planned distribution (available *only after* actual publication)
+## Embedded storage (source on main; not in published CLI yet)
 
-- GitHub Releases: native Linux x64/arm64, macOS x64/arm64, Windows x64 binaries and SHA-256 checksums.
+```rust
+use rystemdb_core::Value;
+use rystemdb_storage::DocumentStore;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = DocumentStore::open("./rystem-data")?;
+    db.put("users/42", &Value::String("example".into()))?;
+    assert_eq!(db.get("users/42")?, Some(Value::String("example".into())));
+    db.delete("users/42")?;
+    Ok(())
+}
+```
+
+See [storage format and limits](docs/STORAGE.md). This is a **single-process experimental API**, without external writer protection, transactional multi-document updates or indexes beyond restart-rebuilt ID positions.
+
+## Distribution
+
+- [v0.1.1 GitHub prerelease](https://github.com/KeyserDSoze/RystemDatabase/releases/tag/v0.1.1): native Linux x64/arm64, macOS x64/arm64, Windows x64 binaries and SHA-256 checksums. These binaries are **health-only**, without the storage library linked.
 - Bash installer: `scripts/install.sh` (Linux/macOS).
 - PowerShell installer: `scripts/install.ps1` (Windows x64).
 - npm/npx: `npx --yes rystemdb --version` once package name ownership and registry publication are established.

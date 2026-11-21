@@ -6,15 +6,15 @@ All work is tracked by GitHub Issues, developed directly on main, with RED → G
 - [x] Rust workspace, nested binary codec, CLI health server
 - [x] GitHub Actions pipeline definition and release packaging configuration
 - [x] npm/npx launcher source, Linux/macOS/Windows installers, container definitions
-- [ ] Confirm a successful CI matrix and publish first signed-off preview artifacts
+- [x] Confirm a successful CI matrix and publish first signed-off preview artifacts (v0.1.1)
 - [ ] Reserve npm package name and configure NPM_TOKEN before npm publishing
 - [ ] End-to-end smoke tests against actual released binaries on every supported OS
 
 ## Storage (0.2.x)
-- [ ] Stable on-disk framing, versioned schema IDs, checksums, append-only segments
-- [ ] Durable document ID → segment/offset lookup and restart recovery
-- [ ] Atomic indexing transactions, crash fault injection, compaction
-- [ ] Document API: insert/get/update/delete with typed nested values
+- [x] Experimental self-describing v1 on-disk framing, checksums and append-only segments (schema dictionary still pending)
+- [x] Rebuildable in-memory document ID → segment/offset lookup with restart replay, plus incomplete final tail truncation
+- [ ] Atomic indexing transactions, process-exit/power-loss crash fault injection, multi-process writer locking and compaction
+- [x] Embedded source API: put/get/delete (overwrite via append) typed nested values; no network API yet
 
 ## Relations and query (0.3.x)
 - [ ] Equality, range, composite and array element indexes

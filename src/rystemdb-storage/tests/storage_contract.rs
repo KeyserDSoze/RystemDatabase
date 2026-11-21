@@ -43,7 +43,7 @@ fn nested() -> Value {
 }
 
 #[test]
-fn tdd_red_put_get_reopen_preserves_nested_types_references_and_absent_fields() {
+fn tdd_put_get_reopen_preserves_nested_types_references_and_absent_fields() {
     let tmp = TempDir::new();
     let document = nested();
     {
@@ -60,7 +60,7 @@ fn tdd_red_put_get_reopen_preserves_nested_types_references_and_absent_fields() 
 }
 
 #[test]
-fn tdd_red_overwrite_and_delete_survive_restart_without_resurrecting_values() {
+fn tdd_overwrite_and_delete_survive_restart_without_resurrecting_values() {
     let tmp = TempDir::new();
     {
         let mut store = DocumentStore::open(tmp.path()).unwrap();
@@ -68,8 +68,8 @@ fn tdd_red_overwrite_and_delete_survive_restart_without_resurrecting_values() {
         store.put("id", &Value::Integer(2)).unwrap();
         store.put("other", &Value::String("keep".into())).unwrap();
         assert_eq!(store.len(), 2);
-        assert_eq!(store.delete("id").unwrap(), true);
-        assert_eq!(store.delete("id").unwrap(), false);
+        assert!(store.delete("id").unwrap());
+        assert!(!store.delete("id").unwrap());
         assert_eq!(store.get("id").unwrap(), None);
     }
     let mut store = DocumentStore::open(tmp.path()).unwrap();
@@ -81,7 +81,7 @@ fn tdd_red_overwrite_and_delete_survive_restart_without_resurrecting_values() {
 }
 
 #[test]
-fn tdd_red_recovers_torn_final_frame_and_accepts_subsequent_appends() {
+fn tdd_recovers_torn_final_frame_and_accepts_subsequent_appends() {
     let tmp = TempDir::new();
     {
         let mut store = DocumentStore::open(tmp.path()).unwrap();
@@ -105,7 +105,7 @@ fn tdd_red_recovers_torn_final_frame_and_accepts_subsequent_appends() {
 }
 
 #[test]
-fn tdd_red_rejects_corrupted_crc_instead_of_silently_returning_data() {
+fn tdd_rejects_corrupted_crc_instead_of_silently_returning_data() {
     let tmp = TempDir::new();
     {
         let mut store = DocumentStore::open(tmp.path()).unwrap();
@@ -124,7 +124,7 @@ fn tdd_red_rejects_corrupted_crc_instead_of_silently_returning_data() {
 }
 
 #[test]
-fn tdd_red_rolls_segments_and_replays_all_records_in_order() {
+fn tdd_rolls_segments_and_replays_all_records_in_order() {
     let tmp = TempDir::new();
     {
         let mut store = DocumentStore::open_with_segment_limit(tmp.path(), 120).unwrap();
@@ -146,7 +146,7 @@ fn tdd_red_rolls_segments_and_replays_all_records_in_order() {
 }
 
 #[test]
-fn tdd_red_rejects_truncation_in_older_segment_instead_of_repairing_history() {
+fn tdd_rejects_truncation_in_older_segment_instead_of_repairing_history() {
     let tmp = TempDir::new();
     {
         let mut store = DocumentStore::open_with_segment_limit(tmp.path(), 120).unwrap();
@@ -163,7 +163,7 @@ fn tdd_red_rejects_truncation_in_older_segment_instead_of_repairing_history() {
 }
 
 #[test]
-fn tdd_red_rejects_invalid_ids_and_too_deep_values() {
+fn tdd_rejects_invalid_ids_and_too_deep_values() {
     let tmp = TempDir::new();
     let mut store = DocumentStore::open(tmp.path()).unwrap();
     assert!(matches!(store.put("", &Value::Null), Err(StoreError::InvalidId)));
@@ -175,11 +175,73 @@ fn tdd_red_rejects_invalid_ids_and_too_deep_values() {
 }
 
 #[test]
-fn tdd_red_binary_segments_do_not_store_json_document_strings() {
+fn tdd_binary_segments_do_not_store_json_document_strings() {
     let tmp = TempDir::new();
     let mut store = DocumentStore::open(tmp.path()).unwrap();
     store.put("id", &nested()).unwrap();
     let bytes = fs::read(tmp.path().join("segment-00000001.rdb")).unwrap();
     assert!(bytes.starts_with(b"RYSF"));
     assert!(!bytes.starts_with(b"{"));
+}
+
+
+#[test]
+fn tdd_discards_only_an_incomplete_final_payload() {
+    let tmp = TempDir::new();
+    {
+        let mut store = DocumentStore::open(tmp.path()).unwrap();
+        store.put("valid", &Value::Integer(11)).unwrap();
+    }
+    let segment = tmp.path().join("segment-00000001.rdb");
+    let before = fs::metadata(&segment).unwrap().len();
+    let mut f = OpenOptions::new().append(true).open(&segment).unwrap();
+    let mut torn_frame = Vec::from(b"RYSF\x01\x01\x00\x00".as_slice());
+    torn_frame.extend_from_slice(&4u32.to_be_bytes()); // 4 id bytes
+    torn_frame.extend_from_slice(&12u32.to_be_bytes()); // 12 payload bytes expected
+    torn_frame.extend_from_slice(&0u32.to_be_bytes()); // missing checksum/body
+    torn_frame.extend_from_slice(b"part");
+    torn_frame.extend_from_slice(b"RDB"); // only 3 of 12 payload bytes
+    f.write_all(&torn_frame).unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+
+    let mut store = DocumentStore::open(tmp.path()).unwrap();
+    assert_eq!(store.get("valid").unwrap(), Some(Value::Integer(11)));
+    assert_eq!(fs::metadata(&segment).unwrap().len(), before);
+    store.put("new", &Value::Null).unwrap();
+    drop(store);
+    assert_eq!(DocumentStore::open(tmp.path()).unwrap().get("new").unwrap(), Some(Value::Null));
+}
+
+#[test]
+fn tdd_detects_checksum_damage_even_after_initial_open() {
+    let tmp = TempDir::new();
+    let mut store = DocumentStore::open(tmp.path()).unwrap();
+    store.put("checksum", &Value::Integer(400)).unwrap();
+    let segment = tmp.path().join("segment-00000001.rdb");
+    let mut f = OpenOptions::new().read(true).write(true).open(segment).unwrap();
+    f.seek(SeekFrom::End(-1)).unwrap();
+    f.write_all(&[0xff]).unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+    assert!(matches!(store.get("checksum"), Err(StoreError::Corrupt(_))));
+}
+
+#[test]
+fn tdd_rejects_missing_segment_without_silent_data_loss() {
+    let tmp = TempDir::new();
+    {
+        let mut store = DocumentStore::open_with_segment_limit(tmp.path(), 120).unwrap();
+        for i in 0..5 {
+            store.put(&format!("id:{i}"), &Value::String("z".repeat(70))).unwrap();
+        }
+    }
+    fs::remove_file(tmp.path().join("segment-00000001.rdb")).unwrap();
+    assert!(matches!(DocumentStore::open(tmp.path()), Err(StoreError::Corrupt(_))));
+}
+
+#[test]
+fn tdd_rejects_invalid_segment_config() {
+    let tmp = TempDir::new();
+    assert!(matches!(DocumentStore::open_with_segment_limit(tmp.path(), 0), Err(StoreError::InvalidSegmentLimit)));
 }
