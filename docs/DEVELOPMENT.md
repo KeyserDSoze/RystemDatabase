@@ -59,3 +59,13 @@ cargo test -p rystemdb-client --locked --all-targets
 ```
 
 The Rust `LocalClient` is synchronous and loopback-only, **not** an authenticated remote or distributed client. See [RPC_SERVER.md](RPC_SERVER.md) and #26.
+
+## Cross-language native typed RDB conformance (source on main)
+
+```sh
+cargo test -p rystemdb-core --locked --test rdb_compat
+cd src/libraries/typescript/rystemdb-client && npm test
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
+```
+
+The C#/TypeScript RDB codecs can **encode and decode** nested binary objects but are not network database clients. [RDB_TYPED_PROTOCOL.md](RDB_TYPED_PROTOCOL.md) documents type mapping and binary compatibility. TDD race/UTF-8 defect #44 requires preserving the U+FEFF scalar.

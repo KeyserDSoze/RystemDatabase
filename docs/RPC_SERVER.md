@@ -52,7 +52,7 @@ Error frames never include file paths, segment contents or exception messages. T
 
 ## Shared CRUD key prefix across Rust, C# and TypeScript
 
-The byte-exact key-prefix contract is now implemented in a **shared Rust `rystemdb-protocol::crud` module**, reused by server/client, and in independent .NET/TypeScript libraries. See [CRUD_KEY_PROTOCOL.md](CRUD_KEY_PROTOCOL.md) for exact golden bytes, Unicode handling, truncation and length guards. Only the key portion is interoperable across three languages so far; nested typed documents still need independent RDB v1 implementations (#43).
+The byte-exact key-prefix contract is now implemented in a **shared Rust `rystemdb-protocol::crud` module**, reused by server/client, and in independent .NET/TypeScript libraries. See [CRUD_KEY_PROTOCOL.md](CRUD_KEY_PROTOCOL.md) for exact golden bytes, Unicode handling, truncation and length guards. Key prefixes **and nested typed RDB values** now have independent three-language codec golden tests ([RDB_TYPED_PROTOCOL.md](RDB_TYPED_PROTOCOL.md)); **no live .NET/TypeScript TCP connection implementations yet** (#27/#28/#43).
 
 ## Experimental Rust client connection
 

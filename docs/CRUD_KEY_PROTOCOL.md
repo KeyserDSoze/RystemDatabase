@@ -2,7 +2,7 @@
 
 Source: [Issue #42](https://github.com/KeyserDSoze/RystemDatabase/issues/42), parent protocol [#38](https://github.com/KeyserDSoze/RystemDatabase/issues/38).
 
-**Implemented in Rust, C#/.NET and TypeScript** in source on `main`, with independent golden/negative conformance tests. This describes the key prefix and opaque PUT bytes only, **not** a complete cross-language typed RDB document codec. That work is tracked in [#43](https://github.com/KeyserDSoze/RystemDatabase/issues/43).
+**Implemented in Rust, C#/.NET and TypeScript** in source on `main`, with independent golden/negative conformance tests. This describes the key prefix and opaque PUT bytes; the separate [RDB v1 value codec](RDB_TYPED_PROTOCOL.md) now has independent cross-language golden tests, while live socket interoperability remains tracked in [#43](https://github.com/KeyserDSoze/RystemDatabase/issues/43).
 
 ## Layout
 
@@ -58,4 +58,4 @@ Independent language implementations:
 - `src/libraries/dotnet/RystemDatabase.Client.Tests/Program.cs` — C# golden/error tests.
 - `src/libraries/typescript/rystemdb-client/tests/crud.test.mjs` — TypeScript golden/error tests.
 
-No public remote server, authentication/TLS, async Rust connection, full C#/TS network SDK or EF provider is implemented by this codec. The server remains **loopback-only**. See [RPC_SERVER.md](RPC_SERVER.md), [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39), [#43](https://github.com/KeyserDSoze/RystemDatabase/issues/43) and [#25](https://github.com/KeyserDSoze/RystemDatabase/issues/25).
+No public remote server, authentication/TLS, async Rust connection, full C#/TS network SDK or EF provider is implemented by this codec. Cross-language typed binary values are now covered separately in [RDB_TYPED_PROTOCOL.md](RDB_TYPED_PROTOCOL.md). The server remains **loopback-only**. See [RPC_SERVER.md](RPC_SERVER.md), [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39), [#43](https://github.com/KeyserDSoze/RystemDatabase/issues/43) and [#25](https://github.com/KeyserDSoze/RystemDatabase/issues/25).

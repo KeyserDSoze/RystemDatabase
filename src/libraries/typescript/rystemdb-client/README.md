@@ -12,4 +12,4 @@ npm test
 
 ## Binary CRUD key codec (source only)
 
-`encodeCrudKey/decodeCrudKey` in `src/crud.ts` use strict UTF-8 and exact big-endian lengths, reject malformed/truncated data and isolated UTF-16 surrogates, and preserve opaque RDB PUT bytes. `npm test` exercises the same golden vectors as Rust and C#. **No typed RDB decoder or TCP/TLS connection yet** (#43 / #28).
+`encodeCrudKey/decodeCrudKey` in `src/crud.ts` use strict UTF-8 and exact big-endian lengths, reject malformed/truncated data and isolated UTF-16 surrogates, and preserve opaque RDB PUT bytes. `npm test` exercises the same golden vectors as Rust and C#. The separate `src/rdb.ts` now provides `encodeRdb/decodeRdb` for nested typed values; i64 uses `bigint`, bytes `Uint8Array`, native references `RdbReference`, objects `Map`, and null remains distinct from missing. Exact Rust/C# golden bytes and UTF-8/invalid input are tested. **No TCP/TLS connection yet** (#43/#28).
