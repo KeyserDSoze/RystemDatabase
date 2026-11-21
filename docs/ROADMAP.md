@@ -18,6 +18,8 @@ All work is tracked by GitHub Issues, developed directly on main, with RED → G
 - [x] Synthetic filesystem I/O error returns with poisoned-writer replay contracts (#20)
 - [ ] Physical power-loss testing, fault-tolerant durable index publication, compaction and recovery (#2, #17)
 - [x] Embedded source API: put/get/delete (overwrite via append) typed nested values; no network API yet
+- [x] Native CLI document put/get/delete over binary store with stdin/file JSON and typed reference/byte tags (#21)
+- [ ] Verify first document CRUD release artifacts, container volume persistence and external installer smoke tests (#21, #1)
 
 ## Relations and query (0.3.x)
 - [ ] Equality, range, composite and array element indexes

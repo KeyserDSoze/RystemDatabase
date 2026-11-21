@@ -6,8 +6,13 @@ services:
     ports:
       - "127.0.0.1:8787:8787"
     restart: unless-stopped
+    volumes:
+      - rystem-data:/data
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8787 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+volumes:
+  rystem-data:

@@ -61,3 +61,14 @@ jobs:
           done
           docker logs "$cid"
           exit 1
+      - name: Verify documents persist across separate Docker invocations
+        shell: bash
+        run: |
+          volume="rystem-ci-${GITHUB_RUN_ID}"
+          docker volume create "$volume" >/dev/null
+          trap 'docker volume rm "$volume" >/dev/null 2>&1 || true' EXIT
+          printf '{"name":"Ada"}' | docker run --rm -i -v "$volume:/data" rystemdb:ci \
+            document put --data /data --collection users --id u42 --json -
+          found="$(docker run --rm -v "$volume:/data" rystemdb:ci \
+            document get --data /data --collection users --id u42)"
+          test "$found" = '{"name":"Ada"}'

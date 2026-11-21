@@ -16,7 +16,7 @@ cd npm/cli && npm test
 docker build -f docker/Dockerfile -t rystemdb:local .
 ```
 
-Checks currently exercise the codec and CLI foundation only. The project now has experimental append-only persistent document segments and contract tests, but **an advisory cross-process writer lock, but **no transactional index, multi-document transaction or production-grade crash/power-loss guarantees****; each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
+Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors. An advisory cross-process writer lock is provided; **no transactional secondary indexes, multi-document ACID, enforced reference integrity, or proven power-loss durability exist**. Each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
 
 Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/release/rystemdb --help`. On Windows use `target\\release\\rystemdb.exe`.
 
@@ -24,7 +24,7 @@ Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/re
 
 A main push automatically publishes a prerelease only if the semver release corresponding to `npm/cli/package.json` does not already exist; later main pushes at the same version do not replace immutable assets. A matching `vX.Y.Z` tag can also launch the workflow. The release job verifies tests, builds native files, uploads SHA256SUMS to GitHub Releases and publishes a GHCR image. Bump Cargo workspace and npm package versions together before the next version. npm publishing needs `NPM_TOKEN` and ownership of the `rystemdb` package on npm; without the token the package step is intentionally skipped. Check release asset smoke tests before advertising an installer.
 
-This foundation cannot store data; do not use the health server as a deployed database.
+The native CLI stores binary documents, but the `serve` endpoint remains health-only; never deploy it as a production database server.
 
 ## Crash-injection safety
 
