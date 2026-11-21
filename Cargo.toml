@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/rystemdb-core", "src/rystemdb-cli", "src/rystemdb-storage"]
+members = ["src/rystemdb-core", "src/rystemdb-cli", "src/rystemdb-storage", "src/rystemdb-protocol", "src/libraries/rust/rystemdb-client"]
 resolver = "2"
 
 [workspace.package]

@@ -46,6 +46,17 @@ name = "rystemdb-core"
 version = "0.1.1"
 
 [[package]]
+name = "rystemdb-client"
+version = "0.1.1"
+dependencies = [
+ "rystemdb-protocol",
+]
+
+[[package]]
+name = "rystemdb-protocol"
+version = "0.1.1"
+
+[[package]]
 name = "rystemdb-storage"
 version = "0.1.1"
 dependencies = [

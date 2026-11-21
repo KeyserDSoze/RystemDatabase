@@ -1,0 +1,11 @@
+[package]
+name = "rystemdb-protocol"
+description = "Versioned bounded binary wire framing protocol for Rystem Database"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
