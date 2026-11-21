@@ -3,15 +3,17 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RystemLocalClient } from "../src/client.ts";
 import { encodeRdb, RdbReference } from "../src/rdb.ts";
 
-async function startNative(binary, data) {
+async function startNative(binary, data, authFile = undefined) {
   // The child owns its :0 port atomically, avoiding race with parallel runners.
-  const child=spawn(binary, ["rpc-serve","--data",data,"--listen","127.0.0.1:0"],{
+  const args=["rpc-serve","--data",data,"--listen","127.0.0.1:0"];
+  if(authFile) args.push("--auth-file",authFile);
+  const child=spawn(binary, args,{
     stdio:["ignore","pipe","pipe"],
   });
   try {
@@ -105,4 +107,44 @@ test("TDD RED: Node real Rust process HELLO PING nested PUT GET DELETE and resta
       } finally { await client.close(); }
     } finally { await stopNative(server); }
   } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+
+test("TDD RED: Node authenticated HELLO and collection-specific read/write permissions", {
+  skip: !process.env.RYSTEMDB_BINARY,
+  timeout: 60000,
+}, async () => {
+  const root=await mkdtemp(join(tmpdir(),"rystem-ts-auth-"));
+  const acl=join(root,"policy.txt");
+  await writeFile(acl,
+    "11".repeat(32)+" orders r\n"+
+    "22".repeat(32)+" orders w\n",{mode:0o600});
+  let server;
+  try {
+    server=await startNative(process.env.RYSTEMDB_BINARY,join(root,"store"),acl);
+    await assert.rejects(RystemLocalClient.connect("127.0.0.1",server.port),
+      error => error.status === 6);
+    await assert.rejects(RystemLocalClient.connect("127.0.0.1",server.port,new Uint8Array(32)),
+      error => error.status === 6);
+    const writer=await RystemLocalClient.connect("127.0.0.1",server.port,
+      Uint8Array.from({length:32},()=>0x22));
+    const reader=await RystemLocalClient.connect("127.0.0.1",server.port,
+      Uint8Array.from({length:32},()=>0x11));
+    try {
+      await writer.ping();
+      await writer.put("orders","private",nestedDoc());
+      await assert.rejects(writer.get("orders","private"), error=>error.status===6);
+      assert.deepEqual(await reader.get("orders","private"),nestedDoc());
+      await assert.rejects(reader.put("orders","private",nestedDoc()),
+        error=>error.status===6);
+      await assert.rejects(writer.put("unknown","private",nestedDoc()),
+        error=>error.status===6);
+      assert.equal(await writer.delete("orders","private"),true);
+    } finally {
+      await reader.close(); await writer.close();
+    }
+  } finally {
+    if(server) await stopNative(server);
+    await rm(root,{recursive:true,force:true});
+  }
 });

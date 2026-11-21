@@ -93,6 +93,63 @@ internal static class LiveContract
                 Check(await client.DeleteAsync("orders", "\uFEFFid"),
                     "Persistent native record not deletable");
             }
+            // TDD RED: authenticator must grant precise collection permissions
+            // and never reuse the legacy anonymous HELLO in secure local mode.
+            var authFile = Path.Combine(data, "auth-policy.txt");
+            await File.WriteAllTextAsync(authFile,
+                new string('1', 64) + " orders r\n" +
+                new string('2', 64) + " orders w\n");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(authFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            await using (var secure = await LiveServer.StartAsync(
+                binary, Path.Combine(data, "auth-store"), authFile))
+            {
+                try
+                {
+                    await RystemLoopbackClient.ConnectAsync(IPAddress.Loopback, secure.Port);
+                    throw new Exception("Anonymous HELLO bypassed authenticated local server");
+                }
+                catch (RystemRpcException ex) when (ex.Status == 6) { }
+
+                try
+                {
+                    await RystemLoopbackClient.ConnectWithTokenAsync(
+                        IPAddress.Loopback, secure.Port, new byte[32]);
+                    throw new Exception("Wrong local credential was accepted");
+                }
+                catch (RystemRpcException ex) when (ex.Status == 6) { }
+
+                await using var writer = await RystemLoopbackClient.ConnectWithTokenAsync(
+                    IPAddress.Loopback, secure.Port, Enumerable.Repeat((byte)0x22, 32).ToArray());
+                await using var reader = await RystemLoopbackClient.ConnectWithTokenAsync(
+                    IPAddress.Loopback, secure.Port, Enumerable.Repeat((byte)0x11, 32).ToArray());
+                await writer.PingAsync();
+                await writer.PutAsync("orders", "secret", Document());
+                try
+                {
+                    await writer.GetAsync("orders", "secret");
+                    throw new Exception("Write-only token read a document");
+                }
+                catch (RystemRpcException ex) when (ex.Status == 6) { }
+                var found = await reader.GetAsync("orders", "secret");
+                Check(found is not null &&
+                    RystemRdbCodec.Encode(found).AsSpan()
+                        .SequenceEqual(RystemRdbCodec.Encode(Document())),
+                    "Read-only token failed to access its own collection");
+                try
+                {
+                    await reader.DeleteAsync("orders", "secret");
+                    throw new Exception("Read-only token deleted a document");
+                }
+                catch (RystemRpcException ex) when (ex.Status == 6) { }
+                try
+                {
+                    await writer.PutAsync("other", "secret", Document());
+                    throw new Exception("Unknown collection was writable");
+                }
+                catch (RystemRpcException ex) when (ex.Status == 6) { }
+                Check(await writer.DeleteAsync("orders", "secret"), "Authorized delete rejected");
+            }
             Console.WriteLine("Rystem .NET LIVE loopback client + Rust TCP server: PASS");
         }
         finally
@@ -128,7 +185,7 @@ internal static class LiveContract
             _process = process;
             Port = port;
         }
-        public static async Task<LiveServer> StartAsync(string binary, string data)
+        public static async Task<LiveServer> StartAsync(string binary, string data, string? authFile = null)
         {
             var start = new ProcessStartInfo(binary)
             {
@@ -141,6 +198,11 @@ internal static class LiveContract
             start.ArgumentList.Add(data);
             start.ArgumentList.Add("--listen");
             start.ArgumentList.Add("127.0.0.1:0");
+            if (authFile is not null)
+            {
+                start.ArgumentList.Add("--auth-file");
+                start.ArgumentList.Add(authFile);
+            }
             var process = Process.Start(start) ??
                 throw new Exception("Unable to spawn native Rust Rystem server");
             try

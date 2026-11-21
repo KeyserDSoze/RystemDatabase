@@ -89,6 +89,11 @@ impl LocalClient {
         Ok(client)
     }
 
+    /// RED: authenticated loopback connection, intentionally unimplemented.
+    pub fn connect_with_token(_addr: SocketAddr, _token: &[u8; 32]) -> Result<Self, ClientError> {
+        Err(ClientError::ResponseMismatch)
+    }
+
     /// Verify the open connection is still responsive; use the same socket.
     pub fn ping(&mut self) -> Result<(), ClientError> {
         let frame = self.call(Operation::Ping, Vec::new())?;

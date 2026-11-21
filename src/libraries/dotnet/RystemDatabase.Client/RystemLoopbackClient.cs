@@ -68,6 +68,11 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         }
     }
 
+    /// <summary>RED: opt-in 32-byte local-token HELLO, not yet implemented.</summary>
+    public static Task<RystemLoopbackClient> ConnectWithTokenAsync(
+        IPAddress address, int port, byte[] token, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("authenticated HELLO not implemented");
+
     public async Task PingAsync(CancellationToken cancellationToken = default)
     {
         var reply = await CallAsync(WireOperation.Ping, [], cancellationToken).ConfigureAwait(false);
