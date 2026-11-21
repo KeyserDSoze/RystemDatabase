@@ -26,3 +26,13 @@ test('TDD: wrapper can show its platform without a release or network', () => {
   const output = execFileSync(process.execPath, [script, '--wrapper-info'], { encoding: 'utf8' });
   assert.match(output, /rystemdb npm launcher 0\.1\.1/);
 });
+
+test('TDD RED: Bash installer supports macOS default Bash 3.2 syntax', async () => {
+  const { readFileSync } = await import('node:fs');
+  const script = fileURLToPath(new URL('../../scripts/install.sh', import.meta.url));
+  const text = readFileSync(script, 'utf8');
+  assert.doesNotMatch(text, /\$\{(?:actual|expected),,\}/,
+    'Bash 4+ lowercase expansion is not supported by macOS system Bash 3.2');
+  assert.match(text, /tr '\[:upper:\]' '\[:lower:\]'/,
+    'checksum comparison should normalize case using portable tr');
+});
