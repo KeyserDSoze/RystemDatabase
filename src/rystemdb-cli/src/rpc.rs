@@ -129,6 +129,15 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
         };
         let mut wrapped = rustls::StreamOwned::new(conn, stream);
         handle_client_frames(&mut wrapped, db, policy);
+        if !wrapped.conn.is_handshaking() {
+            // Finish the TLS record layer with a proper close_notify alert.
+            // An abrupt TCP EOF can cause native Network.framework SslStream
+            // on macOS to discard an already-flushed final RSWP status frame.
+            // Never close a denied-auth session until both the RSWP frame and
+            // TLS close notification have been pushed to the socket.
+            wrapped.conn.send_close_notify();
+            let _ = wrapped.flush();
+        }
     } else {
         handle_client_frames(&mut stream, db, policy);
     }
