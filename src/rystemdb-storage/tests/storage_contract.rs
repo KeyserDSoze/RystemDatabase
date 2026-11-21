@@ -315,3 +315,19 @@ fn tdd_crashed_lock_holder_does_not_leave_stale_ownership() {
     assert!(DocumentStore::open(tmp.path()).is_ok(),
         "OS must release the lock automatically on process death");
 }
+
+
+#[test]
+fn tdd_writer_lock_is_per_directory_and_file_is_not_deleted_on_exit() {
+    let first_dir = TempDir::new();
+    let second_dir = TempDir::new();
+    let first = DocumentStore::open(first_dir.path()).unwrap();
+    let other = DocumentStore::open(second_dir.path()).unwrap();
+    let lock_path = first_dir.path().join("rystemdb.writer.lock");
+    assert!(lock_path.is_file(), "the lock file must exist while held");
+    drop(first);
+    assert!(lock_path.is_file(), "unlock must not unlink the lock inode");
+    drop(other);
+    assert!(DocumentStore::open(first_dir.path()).is_ok(),
+        "existing lock file must not block a new process without an OS lock");
+}
