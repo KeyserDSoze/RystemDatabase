@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [storage format and limits](docs/STORAGE.md). This is a **single-process experimental API**, with an OS advisory single-writer lock, but without transactional multi-document updates or secondary indexes.
+See [storage format, crash-recovery tests and limits](docs/STORAGE.md). A feature-gated real-process crash matrix is exercised in CI; this remains a **single-process experimental API** with an OS advisory single-writer lock, but without transactional multi-document updates, secondary indexes or proven physical power-loss durability.
 
 ## Distribution
 

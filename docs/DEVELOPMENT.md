@@ -10,7 +10,8 @@ Local requirements: Rust 1.89.0+, Cargo, Node.js 20+, optionally Docker.
 
 ```sh
 cargo test --workspace --locked --all-targets
-cargo clippy --workspace --locked --all-targets -- -D warnings
+cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1
+cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
 cd npm/cli && npm test
 docker build -f docker/Dockerfile -t rystemdb:local .
 ```
@@ -24,3 +25,7 @@ Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/re
 A main push automatically publishes a prerelease only if the semver release corresponding to `npm/cli/package.json` does not already exist; later main pushes at the same version do not replace immutable assets. A matching `vX.Y.Z` tag can also launch the workflow. The release job verifies tests, builds native files, uploads SHA256SUMS to GitHub Releases and publishes a GHCR image. Bump Cargo workspace and npm package versions together before the next version. npm publishing needs `NPM_TOKEN` and ownership of the `rystemdb` package on npm; without the token the package step is intentionally skipped. Check release asset smoke tests before advertising an installer.
 
 This foundation cannot store data; do not use the health server as a deployed database.
+
+## Crash-injection safety
+
+`fault-injection` is a **test-only Cargo feature**, disabled in normal/release builds. Test children can exit without unwinding and are expected to leave incomplete file frames for replay. Never ship or package production binaries with that feature. A green process-crash matrix is not a proof of physical power-loss persistence; the [storage safety issues](https://github.com/KeyserDSoze/RystemDatabase/issues/17) remain open for this and other guarantees.

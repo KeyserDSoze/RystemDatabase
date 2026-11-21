@@ -35,7 +35,19 @@ The checksum is CRC-32/ISO-HDLC over bytes [4..16] followed by ID and payload; i
 4. On restart, replay every segment, creating the ID index from the latest PUT/DELETE for each ID. Last segment only: truncate a physically incomplete final frame. Complete corrupt frames and older truncated frames are **rejected**, not skipped.
 5. Sync failures make the current writer unusable until reopen; a failed write may have an uncertain outcome after a crash.
 
-Read/write/delete/rollover/restart, malformed input, corruption and truncated-tail behavior are covered by Cargo integration tests.
+Read/write/delete/rollover/restart, malformed input, corruption and truncated-tail behavior are covered by Cargo integration tests. The **feature-enabled real-process fault matrix** covers pre-append, torn synced payload, complete pre-sync write, post-sync/pre-index publication (PUT and DELETE), and post-directory-sync segment rotation. It is run on Linux, macOS and Windows.
+
+## Crash semantics (test-only)
+
+`cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1` intentionally starts subprocesses which exit with code `97` at controlled storage boundaries, skipping Rust destructors. Only this test build reads `RYSTEMDB_TEST_CRASH_POINT`. Never build a release with `fault-injection` enabled. See [ADR 0003](../adr/0003-process-crash-fault-injection.md) and [crash test matrix](../tests/CRASH_GATE.md).
+
+- Before append: existing acknowledged data survives; new value absent.
+- Mid-frame with a persisted partial payload: only the incomplete tail of the **last** segment is repaired.
+- Full write **before** sync: the new value may or may not replay, but must not be partial or invalid.
+- After successful sync **before** in-memory publication: a complete PUT or DELETE must replay.
+- After new segment creation and directory sync: prior documents survive and new empty segment is reusable.
+
+These tests simulate **process termination**, not disk failure or sudden power loss.
 
 ## Explicit limitations
 
