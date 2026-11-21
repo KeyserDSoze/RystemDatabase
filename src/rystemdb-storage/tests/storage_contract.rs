@@ -254,7 +254,8 @@ fn tdd_exclusive_lock_rejects_competing_writer_and_releases_on_drop() {
     assert!(matches!(DocumentStore::open(tmp.path()), Err(StoreError::Locked)),
         "second writer must be rejected as Locked");
     drop(first);
-    assert!(DocumentStore::open(tmp.path()).is_ok(), "reopen must work after normal close");
+    let reopened = DocumentStore::open(tmp.path());
+    assert!(reopened.is_ok(), "reopen must work after normal close; actual result: {reopened:?}");
 }
 
 // Explicit child entrypoints only run when invoked by the parent test with an env variable.
@@ -330,4 +331,22 @@ fn tdd_writer_lock_is_per_directory_and_file_is_not_deleted_on_exit() {
     drop(other);
     assert!(DocumentStore::open(first_dir.path()).is_ok(),
         "existing lock file must not block a new process without an OS lock");
+}
+
+
+#[test]
+fn tdd_repeated_competing_open_and_reopen_never_sticks() {
+    let tmp = TempDir::new();
+    for pass in 0..50 {
+        let first = DocumentStore::open(tmp.path()).unwrap_or_else(|err| {
+            panic!("writer unexpectedly locked at iteration {pass}: {err:?}");
+        });
+        assert!(matches!(DocumentStore::open(tmp.path()), Err(StoreError::Locked)),
+            "second writer must be excluded at iteration {pass}");
+        drop(first);
+        let second = DocumentStore::open(tmp.path()).unwrap_or_else(|err| {
+            panic!("lock was not released at iteration {pass}: {err:?}");
+        });
+        drop(second);
+    }
 }
