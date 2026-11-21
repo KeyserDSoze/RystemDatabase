@@ -9,7 +9,7 @@ export interface CrudKey {
   document: Uint8Array;
 }
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const MAX_BODY = 16 * 1024 * 1024;
 
 function validCollection(s: string): boolean {

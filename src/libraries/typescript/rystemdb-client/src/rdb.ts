@@ -24,7 +24,7 @@ const MAX_DEPTH = 64;
 const INT64_MIN = -(1n << 63n);
 const INT64_MAX = (1n << 63n) - 1n;
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function utf8(value: string): Uint8Array {
   if (typeof value !== "string") throw new Error("expected string");
