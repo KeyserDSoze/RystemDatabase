@@ -2,7 +2,7 @@
 
 Source of truth: [Issue #24](https://github.com/KeyserDSoze/RystemDatabase/issues/24), `src/rystemdb-protocol`. A versioned, **binary frame** carries the request/response metadata and an opaque binary payload. It is conceptually similar to JSON-RPC (method + request ID + response status), but JSON is **not used** for the frame envelope or its planned document payload.
 
-**Status:** codecs tested in Rust, C#/.NET and TypeScript, but **no live RPC server, authenticated remote client, wire CRUD schema, TLS endpoint or distributed routing** yet. The framing codec is NOT a secure transport. Never expose it directly on the public Internet.
+**Status:** the frame codecs are tested in Rust, C#/.NET and TypeScript, and an experimental **loopback-only** Rust TCP server now implements a provisional binary document CRUD body. This is **not** an authenticated remote server or cross-language CRUD client; there is no TLS, authz or distributed routing. No version with the RPC server has been released yet.
 
 ## Exact header v1
 
@@ -34,9 +34,9 @@ For `PING`, request ID `7`, no payload:
 
 Rust, C# and TypeScript independent conformance tests assert these octets. All implementations must reject truncation and oversized payload length **before allocation**.
 
-## Document payload and future extension
+## Provisional document payload v1 (local server on main)
 
-This framing layer intentionally does not yet define a released or interoperable CRUD body schema. The design target is to reuse the existing `RDB\0` typed binary document codec, with compact collection/ID keys and explicit missing-vs-null/byte/reference handling. This will require versioned, interoperable body vectors and wire contract tests before activating PUT/GET/DELETE. The high-level operation tags are **reserved**, not evidence that the server already implements CRUD.
+A **working local-only** Rust server uses binary HELLO/PING and PUT/GET/DELETE: [exact body layout, statuses and safety limits](RPC_SERVER.md). Request key: `u16 collection_len BE` + ASCII collection + `u16 id_len BE` + UTF-8 ID, plus one `RDB\\0` typed document payload for PUT. GET responds with binary `RDB\\0` value, never JSON. The body schema remains **experimental** until shared SDK helpers and independently validated C#/TypeScript CRUD golden vectors exist (#38); frame conformance alone does not establish full client interoperability.
 
 Long queries and data streams need bounded multi-frame chunking, cancellation, deadlines, flow control and pagination; large analytics results are better served as Arrow IPC/Flight SQL when DataFusion is implemented. Client request ID correlation and server response status are already represented by the v1 header, but idempotency tokens and topology/shard epochs are a later negotiated schema.
 

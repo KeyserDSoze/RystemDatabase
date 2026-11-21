@@ -24,7 +24,7 @@ Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/re
 
 A main push automatically publishes a prerelease only if the semver release corresponding to `npm/cli/package.json` does not already exist; later main pushes at the same version do not replace immutable assets. A matching `vX.Y.Z` tag can also launch the workflow. The release job verifies tests, builds native files, uploads SHA256SUMS to GitHub Releases and publishes a GHCR image. Bump Cargo workspace and npm package versions together before the next version. npm publishing needs `NPM_TOKEN` and ownership of the `rystemdb` package on npm; without the token the package step is intentionally skipped. Check release asset smoke tests before advertising an installer.
 
-The native CLI stores binary documents, but the `serve` endpoint remains health-only; never deploy it as a production database server.
+The native CLI stores binary documents; the HTTP `serve` endpoint remains health-only. A separate experimental `rpc-serve` on main serves binary CRUD over **localhost only** with no TLS/auth and is **not in the existing v0.1.2 release**. Never deploy it as a production network database server.
 
 ## Crash-injection safety
 
@@ -41,3 +41,12 @@ dotnet build src/libraries/dotnet/RystemDatabase.EntityFrameworkCore/RystemDatab
 ```
 
 These commands only validate binary frame codecs and EF build scaffolding; no remote SDK/server integration is yet implemented. All tests must run in CI on main; do not ship unauthenticated RPC servers.
+
+## Local-only binary RPC test (unreleased on main)
+
+```sh
+cargo test -p rystemdb-cli --locked --test rpc_server -- --test-threads=1
+cargo run -p rystemdb-cli -- rpc-serve --data ./data --listen 127.0.0.1:8790
+```
+
+The server requires HELLO v1.0 and uses RSWP frames with typed binary RDB values, not JSON; see [RPC_SERVER.md](RPC_SERVER.md). Never bind a non-loopback address or tunnel the unauthenticated prototype remotely. Future TLS/auth is tracked in #39.

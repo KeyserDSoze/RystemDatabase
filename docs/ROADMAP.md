@@ -8,7 +8,7 @@ All work is tracked by GitHub Issues, developed directly on main, with RED → G
 - [x] npm/npx launcher source, Linux/macOS/Windows installers, container definitions
 - [x] Confirm a successful CI matrix and publish first signed-off preview artifacts (v0.1.1)
 - [ ] Reserve npm package name and configure NPM_TOKEN before npm publishing
-- [ ] End-to-end smoke tests against actual released binaries on every supported OS
+- [x] End-to-end installer + CRUD smoke against published v0.1.2 binaries on Linux, macOS and Windows (#21/#22/#36)
 
 ## Storage (0.2.x)
 - [x] Experimental self-describing v1 on-disk framing, checksums and append-only segments (schema dictionary still pending)
@@ -19,7 +19,7 @@ All work is tracked by GitHub Issues, developed directly on main, with RED → G
 - [ ] Physical power-loss testing, fault-tolerant durable index publication, compaction and recovery (#2, #17)
 - [x] Embedded source API: put/get/delete (overwrite via append) typed nested values; no network API yet
 - [x] Native CLI document put/get/delete over binary store with stdin/file JSON and typed reference/byte tags (#21)
-- [ ] Verify first document CRUD release artifacts, container volume persistence and external installer smoke tests (#21, #1)
+- [x] Verified native v0.1.2 document CRUD prerelease, container persistence and installer smoke across three OS (#21/#22/#36); npm/npx publication still pending (#1)
 
 ## Relations and query (0.3.x)
 - [ ] Equality, range, composite and array element indexes
@@ -44,7 +44,8 @@ GitHub Issues are the source of truth, not static checkboxes alone. [Browse open
 
 - [x] Create four `src/libraries` project folders: Rust, .NET, TypeScript and EF Core (#26–29)
 - [x] RSWP v1 fixed binary framing and Rust/.NET/TypeScript golden vector test infrastructure (#24/#27/#28, partial milestones)
-- [ ] Authenticated native RPC server, wire CRUD body schema, session pooling and complete SDK connections (#25–28)
+- [x] Experimental loopback-only RSWP native TCP binary CRUD server with bounded workers and TDD subprocess tests (#37)
+- [ ] Authenticated native RPC server, fully interoperable wire CRUD body schema, session pooling and complete SDK connections (#25–28, #38, #39)
 - [ ] Genuine EF Core provider semantics, LINQ translation, tracking and EF specification suite (#29)
 - [ ] Production TLS/cert validation, authn/authz, flow control, idempotency, version negotiation (#24/#25)
 - [ ] Arrow Flight SQL streaming analytical endpoint and interoperability (#35)

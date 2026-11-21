@@ -2,7 +2,7 @@
 
 **Hybrid document + relational + analytical database, built in Rust.**
 
-> **Status: experimental preview.** The native CLI now supports persistent document put/get/delete using typed binary storage. **The network server remains health-only.** No indexed queries, SQL, multi-document transactions, MVCC, enforced foreign keys or production guarantees. The older `v0.1.1` release is health-only; verify [Releases](https://github.com/KeyserDSoze/RystemDatabase/releases) for the newer CLI preview before installing.
+> **Status: experimental preview.** The native CLI now supports persistent document put/get/delete using typed binary storage. **The HTTP server remains health-only; `rpc-serve` on current main is experimental localhost-only binary CRUD (not in published v0.1.2).** No indexed queries, SQL, multi-document transactions, MVCC, enforced foreign keys or production guarantees. The older `v0.1.1` release is health-only; verify [Releases](https://github.com/KeyserDSoze/RystemDatabase/releases) for the newer CLI preview before installing.
 
 Rystem Database follows the top-level structure of [TemporalMark](https://github.com/KeyserDSoze/TemporalMark): `src/`, `tests/`, `docs/`, `adr/`, `scripts/`, `docker/`, `infra/`, `.github/`.
 
@@ -51,15 +51,15 @@ See [storage format, crash-recovery tests and limits](docs/STORAGE.md). Feature-
 
 ## Client libraries and distributed architecture (experimental)
 
-The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP v1 frame codecs with TDD conformance tests; **no remote network connection or EF Core provider functionality is implemented yet**.
+The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP v1 frame codecs with TDD conformance tests; **a localhost-only native RPC server exists on `main`, but there is no secure remote client connection or functioning EF Core provider yet**.
 
-- [RSWP v1 binary protocol](docs/WIRE_PROTOCOL.md): 24-byte versioned envelope, 64-bit correlation ID, bounded payload; designed for future authenticated TCP/TLS transport.
+- [RSWP v1 binary protocol](docs/WIRE_PROTOCOL.md): 24-byte versioned envelope, 64-bit correlation ID and bounded payload. [Local TCP RPC prototype](docs/RPC_SERVER.md) on main (not in v0.1.2) uses binary document CRUD over loopback only.
 - [Distributed design](docs/DISTRIBUTED_ARCHITECTURE.md): shard routing/epochs, replicated WAL/quorum, regional asynchronous replication and failover proposals; **not implemented**.
 - [Issues #23–#35](https://github.com/KeyserDSoze/RystemDatabase/issues/23): actual feature backlog for server, clients, EF, sharding, geo, adaptive indexing, sparse storage and analytical Arrow Flight SQL.
 
 ## Distribution
 
-- [GitHub Releases](https://github.com/KeyserDSoze/RystemDatabase/releases): native Linux x64/arm64, macOS x64/arm64, Windows x64 binaries and SHA-256 checksums. `v0.1.1` is health-only; the planned `v0.1.2` is the first document CRUD CLI preview once its release workflow is confirmed.
+- [GitHub Releases](https://github.com/KeyserDSoze/RystemDatabase/releases): native Linux x64/arm64, macOS x64/arm64, Windows x64 binaries and SHA-256 checksums. `v0.1.1` is health-only; **`v0.1.2` is the published document CRUD CLI preview**. The `rpc-serve` source is not yet in a new release.
 - Bash installer: `scripts/install.sh` (Linux/macOS).
 - PowerShell installer: `scripts/install.ps1` (Windows x64).
 - npm/npx: `npx --yes rystemdb --version` once package name ownership and registry publication are established.

@@ -1,6 +1,6 @@
 # Installation and distribution
 
-Install native release binaries only after verifying the version exists in [GitHub Releases](https://github.com/KeyserDSoze/RystemDatabase/releases). `v0.1.1` is health-only; `v0.1.2` is the first planned document CRUD CLI prerelease, pending actual release verification. The npm/npx wrapper remains unavailable until actual npm registry publication.
+Install native release binaries only after verifying the version exists in [GitHub Releases](https://github.com/KeyserDSoze/RystemDatabase/releases). `v0.1.1` is health-only; **`v0.1.2` is the published and cross-OS installation-tested local document CRUD CLI prerelease**. The newer `rpc-serve` development command currently exists only in source on `main`, not in the published `v0.1.2` assets. The npm/npx wrapper remains unavailable until actual npm registry publication.
 
 ## Linux and macOS
 
@@ -23,7 +23,7 @@ rystemdb --version
 
 The user PATH is updated for subsequent terminals. For a pinned release pass `-Version v0.1.2`.
 
-## Document CRUD CLI (from v0.1.2, after verified publication)
+## Document CRUD CLI (published v0.1.2)
 
 ```sh
 printf '{"name":"Ada","active":true}' | rystemdb document put --data ./data --collection users --id u42 --json -

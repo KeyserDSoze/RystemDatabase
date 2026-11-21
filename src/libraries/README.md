@@ -9,7 +9,7 @@ Four project directories, all developed directly on `main`:
 | TypeScript | `typescript/rystemdb-client` | Node.js 22+ TypeScript RSWP framing codec tested; no live connection yet | #28 |
 | EF Core | `dotnet/RystemDatabase.EntityFrameworkCore` | Buildable .NET project scaffold only, **not an EF Core provider** | #29 |
 
-The separate `src/rystemdb-protocol` crate is the binary wire frame reference (#24); the server (#25), TLS/auth, interoperability against live RPC and CRUD payload schemas remain separate work.
+The separate `src/rystemdb-protocol` crate is the binary wire frame reference (#24); an experimental loopback-only server is now being implemented under #37, but TLS/auth (#39), **working client SDK connections** and shared interoperable CRUD payload schemas (#38) remain open work.
 
 Conformance source/tests:
 - Rust: `src/rystemdb-protocol/tests/wire_contract.rs`
