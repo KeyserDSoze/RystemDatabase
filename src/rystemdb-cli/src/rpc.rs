@@ -7,6 +7,7 @@
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
 use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
 use rystemdb_storage::DocumentStore;
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -70,6 +71,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     println!("Rystem Database experimental LOOPBACK RPC listening on {}",
         listener.local_addr().map_err(|err| err.to_string())?);
+    // Explicit flush makes stdout a deterministic readiness channel even
+    // when it is piped to a test process instead of a terminal.
+    std::io::stdout().flush().map_err(|err| err.to_string())?;
 
     for accepted in listener.incoming() {
         match accepted {

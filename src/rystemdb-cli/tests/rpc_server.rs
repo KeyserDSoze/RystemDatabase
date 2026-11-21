@@ -3,7 +3,8 @@ use rystemdb_core::{decode as decode_document, encode as encode_document, Value}
 use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, ProtocolError};
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::io::{BufRead, BufReader};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,26 +31,23 @@ impl Drop for Tmp {
 struct Server { child: Child, address: SocketAddr }
 impl Server {
     fn start(data: &Path) -> Self {
-        // A temporary port is allocated by the OS and immediately released.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
+        // The CHILD binds :0 atomically and reports its actual port.
+        // Never release a parent-reserved port before spawning: parallel tests
+        // can race each other and accidentally connect to the wrong server.
         let mut child = Command::new(env!("CARGO_BIN_EXE_rystemdb"))
             .args(["rpc-serve", "--data"]).arg(data)
-            .args(["--listen", &address.to_string()])
-            .stdout(Stdio::null()).stderr(Stdio::null())
+            .args(["--listen", "127.0.0.1:0"])
+            .stdout(Stdio::piped()).stderr(Stdio::null())
             .spawn().unwrap();
-        for _ in 0..35 {
-            if TcpStream::connect_timeout(&address, Duration::from_millis(50)).is_ok() {
-                return Self { child, address };
-            }
-            if let Ok(Some(status)) = child.try_wait() {
-                panic!("rpc-serve stopped prematurely: {status}");
-            }
-            thread::sleep(Duration::from_millis(35));
-        }
-        let _ = child.kill(); let _ = child.wait();
-        panic!("rpc-serve never listened on loopback");
+        let stdout = child.stdout.take().unwrap();
+        let mut banner = String::new();
+        let n = BufReader::new(stdout).read_line(&mut banner).unwrap();
+        assert!(n > 0 && banner.contains("LOOPBACK RPC listening on"),
+            "rpc server ended before printing its bound address: {banner:?}");
+        let address: SocketAddr = banner.split_whitespace().last()
+            .expect("bound address in server startup banner").parse().unwrap();
+        assert!(address.ip().is_loopback());
+        Self { child, address }
     }
     fn connect(&self) -> TcpStream {
         let stream = TcpStream::connect(self.address).unwrap();

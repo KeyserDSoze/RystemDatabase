@@ -3,11 +3,11 @@ use rystemdb_client::{ClientError, LocalClient};
 use rystemdb_core::Value;
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::io::{BufRead, BufReader};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 struct Fixture { root: PathBuf, child: Child, addr: SocketAddr }
 impl Fixture {
@@ -15,23 +15,22 @@ impl Fixture {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let root = std::env::temp_dir().join(format!("rystem-sdk-{}-{nanos}", std::process::id()));
         fs::create_dir(&root).unwrap();
-        let sock = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = sock.local_addr().unwrap();
-        drop(sock);
+        // Let the child own the ephemeral port selection to avoid TOCTOU races
+        // with other test processes on heavily parallel macOS/Windows runners.
         let mut child = Command::new(env!("CARGO_BIN_EXE_rystemdb"))
             .args(["rpc-serve", "--data"]).arg(&root)
-            .args(["--listen", &addr.to_string()])
-            .stdout(Stdio::null()).stderr(Stdio::null())
+            .args(["--listen", "127.0.0.1:0"])
+            .stdout(Stdio::piped()).stderr(Stdio::null())
             .spawn().unwrap();
-        for _ in 0..40 {
-            if TcpStream::connect_timeout(&addr, Duration::from_millis(40)).is_ok() {
-                return Self { root, child, addr };
-            }
-            if child.try_wait().unwrap().is_some() { break; }
-            thread::sleep(Duration::from_millis(30));
-        }
-        let _ = child.kill(); let _ = child.wait();
-        panic!("real rpc-serve failed to start");
+        let stdout = child.stdout.take().unwrap();
+        let mut banner = String::new();
+        let n = BufReader::new(stdout).read_line(&mut banner).unwrap();
+        assert!(n > 0 && banner.contains("LOOPBACK RPC listening on"),
+            "server did not report bound port: {banner:?}");
+        let addr: SocketAddr = banner.split_whitespace().last()
+            .expect("bound address").parse().unwrap();
+        assert!(addr.ip().is_loopback());
+        Self { root, child, addr }
     }
 }
 impl Drop for Fixture {
