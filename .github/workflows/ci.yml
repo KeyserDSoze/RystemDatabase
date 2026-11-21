@@ -39,9 +39,13 @@ jobs:
           node-version: '22'
       - run: npm test
         working-directory: npm/cli
-      - name: TypeScript RSWP cross-language wire contract
+      - name: Build actual native Rust server for Node interop
+        run: cargo build --locked -p rystemdb-cli
+      - name: TypeScript RSWP cross-language wire and live RPC contract
         run: npm test
         working-directory: src/libraries/typescript/rystemdb-client
+        env:
+          RYSTEMDB_BINARY: ${{ github.workspace }}/target/debug/rystemdb
       - name: Validate npm package
         run: npm pack --dry-run
         working-directory: npm/cli
@@ -53,8 +57,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: .NET protocol conformance
-        run: dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
+      - name: Build actual native Rust server for C# interop
+        run: cargo build --locked -p rystemdb-cli
+      - name: .NET protocol and live RPC conformance
+        run: dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- target/debug/rystemdb
       - name: Build EF Core library scaffold
         run: dotnet build src/libraries/dotnet/RystemDatabase.EntityFrameworkCore/RystemDatabase.EntityFrameworkCore.csproj --configuration Release
 

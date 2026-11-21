@@ -140,3 +140,5 @@ var bomTyped = new RdbValue.Object(new Dictionary<string,RdbValue>
 Check(RystemRdbCodec.Encode(RystemRdbCodec.Decode(RystemRdbCodec.Encode(bomTyped)))
     .AsSpan().SequenceEqual(RystemRdbCodec.Encode(bomTyped)),
     "C# typed codec must preserve UTF-8 U+FEFF scalar in data");
+
+if (args.Length > 0) await LiveContract.RunAsync(args[0]);
