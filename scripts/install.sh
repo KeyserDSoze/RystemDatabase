@@ -35,7 +35,9 @@ if command -v sha256sum >/dev/null; then
 else
   actual="$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')"
 fi
-if [[ "${actual,,}" != "${expected,,}" ]]; then
+actual_lower="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
+expected_lower="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+if [[ "$actual_lower" != "$expected_lower" ]]; then
   echo "SHA-256 checksum mismatch" >&2; exit 1
 fi
 mkdir -p "$DEST"
