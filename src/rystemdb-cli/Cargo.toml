@@ -1,6 +1,6 @@
 [package]
 name = "rystemdb-cli"
-description = "Rystem Database native CLI and foundation health server"
+description = "Rystem Database native document CLI and experimental health-only network server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,3 +14,4 @@ path = "src/main.rs"
 [dependencies]
 rystemdb-core = { path = "../rystemdb-core" }
 rystemdb-storage = { path = "../rystemdb-storage" }
+serde_json = "1.0"

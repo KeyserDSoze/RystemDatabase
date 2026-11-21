@@ -9,9 +9,12 @@ fn cli_returns_matching_version() {
 }
 
 #[test]
-fn cli_help_discloses_foundation_limitations() {
+fn cli_help_describes_binary_document_cli_and_health_only_server() {
     let out = Command::new(env!("CARGO_BIN_EXE_rystemdb"))
         .arg("--help").output().expect("spawn CLI");
     assert!(out.status.success());
-    assert!(String::from_utf8(out.stdout).unwrap().contains("No data is stored"));
+    let help = String::from_utf8(out.stdout).unwrap();
+    assert!(help.contains("document put"));
+    assert!(help.contains("document get"));
+    assert!(help.contains("network server exposes only health endpoints"));
 }
