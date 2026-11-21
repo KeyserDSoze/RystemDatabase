@@ -177,6 +177,11 @@ fn handle_client_frames<S: Read + Write>(
         // paths, nested data or internal errors even on authorization failures.
         let response = Frame::response(request.operation, request.request_id, status, payload);
         if write_frame(stream, &response).is_err() { break; }
+        // rustls::StreamOwned (and native SslStream peers) may buffer encrypted
+        // application records. Never close after an auth denial until status 6
+        // has been flushed to the underlying transport. Also flush normal CRUD
+        // replies before waiting for another request on persistent connections.
+        if stream.flush().is_err() { break; }
         if close { break; }
     }
 }
