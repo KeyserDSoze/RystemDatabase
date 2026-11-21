@@ -172,3 +172,70 @@ fn tdd_usage_lists_document_operations_and_missing_fields_fail() {
         .output().unwrap();
     assert!(!output.status.success());
 }
+
+
+#[test]
+fn tdd_embedded_native_values_can_be_exported_and_imported_by_cli() {
+    use std::collections::BTreeMap;
+    let tmp = Temp::new();
+    let mut object = BTreeMap::new();
+    object.insert("reference".to_owned(), Value::Reference {
+        collection: "users".into(), id: "u42".into()
+    });
+    object.insert("blob".to_owned(), Value::Bytes(vec![0x00, 0x80, 0xff]));
+    let expected = Value::Object(object);
+    {
+        let mut embedded = DocumentStore::open(tmp.path()).unwrap();
+        embedded.put("orders/embedded", &expected).unwrap();
+    }
+
+    let export = ok(&execute(command(tmp.path(), "get", "orders", "embedded"), None));
+    assert_eq!(export,
+        r#"{"blob":{"$rystem":{"hex":"0080ff","type":"bytes","version":1}},"reference":{"$rystem":{"collection":"users","id":"u42","type":"reference","version":1}}}"#);
+
+    let mut import = command(tmp.path(), "put", "orders", "copy");
+    import.arg("--typed-json");
+    ok(&execute(import, Some(&export)));
+
+    let embedded = DocumentStore::open(tmp.path()).unwrap();
+    assert_eq!(embedded.get("orders/copy").unwrap(), Some(expected));
+}
+
+#[test]
+fn tdd_json_file_input_and_typed_map_escape() {
+    let tmp = Temp::new();
+    let file = tmp.path().join("input.json");
+    fs::write(&file, r#"{"flag":true,"items":[1,{"x":null}]}"#).unwrap();
+    let mut cmd = command(tmp.path(), "put", "reports", "file");
+    cmd.arg("--json").arg(&file);
+    ok(&execute(cmd, None));
+    assert_eq!(ok(&execute(command(tmp.path(), "get", "reports", "file"), None)),
+        r#"{"flag":true,"items":[1,{"x":null}]}"#);
+
+    // In explicit typed mode, the object envelope can escape a literal
+    // $rystem map and keep it as a plain object instead of interpreting it.
+    let escaped = r#"{"record":{"$rystem":{"version":1,"type":"object","value":{"$rystem":{"version":1,"type":"reference","collection":"users","id":"u42"}}}}}"#;
+    let mut put = command(tmp.path(), "put", "reports", "escaped");
+    put.arg("--typed-json");
+    ok(&execute(put, Some(escaped)));
+    let embedded = DocumentStore::open(tmp.path()).unwrap();
+    let Some(Value::Object(map)) = embedded.get("reports/escaped").unwrap() else {
+        panic!("expected embedded object");
+    };
+    assert!(matches!(map.get("record"), Some(Value::Object(_))));
+}
+
+#[test]
+fn tdd_json_document_must_be_an_object_and_bad_flags_do_not_open_storage() {
+    let tmp = Temp::new();
+    let put = execute(command(tmp.path(), "put", "users", "array"), Some("[1,2,3]"));
+    assert!(!put.status.success(), "top-level arrays are not document objects");
+    let mut invalid_get = command(tmp.path(), "get", "users", "other");
+    invalid_get.args(["--typed-json"]);
+    assert!(!execute(invalid_get, None).status.success());
+    let missing = execute(command(tmp.path(), "get", "users", "not-found"), None);
+    assert!(!missing.status.success());
+    let mut put = command(tmp.path(), "put", "users", "repeated");
+    put.args(["--json", "-", "--json", "-"]);
+    assert!(!execute(put, None).status.success());
+}
