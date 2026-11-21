@@ -1,5 +1,6 @@
 //! Native Rystem Database CLI. The network endpoint remains health-only.
 mod json_codec;
+mod rpc;
 
 use rystemdb_storage::DocumentStore;
 use std::env;
@@ -18,11 +19,13 @@ Usage:\n\
   rystemdb document get --data PATH --collection NAME --id ID\n\
   rystemdb document delete --data PATH --collection NAME --id ID\n\
   rystemdb serve [--listen 127.0.0.1:8787]\n\
+  rystemdb rpc-serve --data PATH [--listen 127.0.0.1:8790]\n\
   rystemdb --help\n\
 PUT accepts JSON from stdin (--json -) or a local file (--json FILE).\n\
 --typed-json explicitly interprets $rystem tagged references/bytes.\n\
 The CLI persists binary documents; the network server exposes only health endpoints.\n\
-No SQL, network CRUD, or multi-document transactions yet.\n"
+RPC is experimental localhost-only and unauthenticated; NEVER expose externally.\n\
+No SQL, TLS/auth, distributed RPC, or multi-document transactions yet.\n"
 }
 
 fn response_for(request: &[u8]) -> &'static [u8] {
@@ -166,6 +169,7 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("rystemdb {}", env!("CARGO_PKG_VERSION")); Ok(())
         }
         [command, rest @ ..] if command == "document" => document_command(rest),
+        [command, rest @ ..] if command == "rpc-serve" => rpc::run(rest),
         [command, rest @ ..] if command == "serve" => {
             let addr = match rest {
                 [] => "127.0.0.1:8787",
