@@ -284,6 +284,20 @@ fn fault_if(point: &str) {
     }
 }
 
+// Explicitly release ownership at the end of the DocumentStore lifetime.
+// The OS would normally release an advisory lock on File drop as well, but
+// explicit unlock ensures the lock is relinquished before other fields
+// are automatically closed. The lockfile itself is deliberately retained.
+impl Drop for DocumentStore {
+    fn drop(&mut self) {
+        if let Err(err) = self._writer_lock.unlock() {
+            // Drop cannot return an error. Emit a diagnostic; closing the File
+            // is still the OS fallback for releasing the advisory lock.
+            eprintln!("Rystem Database: error unlocking writer lock: {err}");
+        }
+    }
+}
+
 fn validate_id(id: &str) -> Result<(), StoreError> {
     if id.is_empty() || id.len() > MAX_ID_BYTES {
         Err(StoreError::InvalidId)
