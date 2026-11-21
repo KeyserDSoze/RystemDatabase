@@ -2,7 +2,7 @@
 
 This page describes the **source-only localhost TCP client milestone**, developed directly on main under [#45](https://github.com/KeyserDSoze/RystemDatabase/issues/45), [#46](https://github.com/KeyserDSoze/RystemDatabase/issues/46), and parent [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27)/[#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28).
 
-**Security warning:** the Rust RSWP RPC server does **not implement secure remote authentication or public network policy**. An **optional bearer-token HELLO plus local collection ACL** is available ([LOCAL_AUTH.md](LOCAL_AUTH.md)). The **Rust server/Rust SDK** now also implement [certificate-verified TLS 1.3 on localhost](LOCAL_TLS.md); **.NET and Node clients still use plaintext local TCP** and must not be treated as remote-safe. It will only bind numeric loopback. All three SDKs reject non-loopback connection targets. Do not use port-forwarding or public reverse proxies to bypass that restriction. A production remote client requires [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+**Security warning:** the Rust RSWP RPC server does **not implement secure remote authentication or public network policy**. An **optional bearer-token HELLO plus local collection ACL** is available ([LOCAL_AUTH.md](LOCAL_AUTH.md)). **Rust, .NET and Node SDKs now each implement [CA/hostname-verified TLS 1.3 on localhost](LOCAL_TLS.md)**, in addition to their explicitly separate plaintext developer modes. None is a secure remote client or a released package. It will only bind numeric loopback. All three SDKs reject non-loopback connection targets. Do not use port-forwarding or public reverse proxies to bypass that restriction. A production remote client requires [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 **Release warning:** the current published native release `v0.1.2` predates this RPC server and these SDK connection implementations. Build `rystemdb` from main to run this example. None of the .NET/TypeScript client packages is published to NuGet/npm at this point; npm/cli is an independent native-binary launcher.
 
@@ -38,7 +38,7 @@ bool deleted = await db.DeleteAsync("users", "u42");
 
 `ConnectAsync` validates the numeric IP before socket creation and performs RSWP 1.0 HELLO. Async operations take optional `CancellationToken`, use 3-second per-call deadlines, validate the 24-byte frame and response ID/opcode, and serialize I/O through a semaphore. Cancellation or broken TCP cannot guarantee the outcome of a write; the connection closes rather than blindly replaying it. A missing GET becomes `null`, and a second DELETE yields `false`. Errors return explicit exceptions / `RystemRpcException.Status`.
 
-**Not yet implemented**: TLS/auth, pooling, multiplexing, automatic safe idempotency/retries, query execution, shard-aware placement and NuGet distribution. Parent #27 remains open.
+**Not yet implemented**: mTLS/secure remote identity, pooling, multiplexing, automatic safe idempotency/retries, query execution, shard-aware placement and NuGet distribution. Parent #27 remains open.
 
 ## TypeScript / Node.js 22+ (asynchronous, correlated concurrent requests)
 
@@ -65,7 +65,7 @@ try {
 
 `connect` permits only numeric `127.0.0.1` and `::1` (no DNS). A native socket `Buffer` is normalized to **plain `Uint8Array`**, with independent golden tests plus a real-process regression for a Buffer subclass bug [#47](https://github.com/KeyserDSoze/RystemDatabase/issues/47). The socket parser handles TCP frame fragmentation, guards 16 MiB per message, and correlates concurrent requests by native BigInt u64 IDs. A bounded pending-request map and 3-second inactivity/request timers fail closed on lost connection. No automatic write retries or full streaming queries.
 
-**Not yet implemented**: TLS, authentication, user-provided AbortSignal, connection pools/retry policy, browser support, NuGet/npm SDK release, sharding or geo-redundancy. Parent #28 remains open.
+**Not yet implemented**: secure remote identity/mTLS, user-provided AbortSignal, connection pools/retry policy, browser support, NuGet/npm SDK release, sharding or geo-redundancy. Parent #28 remains open.
 
 ## Real Rust-process CI verification (Linux, macOS, Windows)
 
@@ -92,6 +92,6 @@ See [RSWP framing](WIRE_PROTOCOL.md), [CRUD key spec](CRUD_KEY_PROTOCOL.md), [na
 
 `rystemdb rpc-serve --auth-file ./private/acl.txt` requires a private-file 32-byte token with explicit `r`, `w` or `rw` permissions per collection; it denies anonymous HELLO and unauthorized operations with status `6`. The Rust, .NET and Node SDKs now expose `LocalClient::connect_with_token(addr, &token)`, `RystemLoopbackClient.ConnectWithTokenAsync(IPAddress.Loopback, port, token)` and `RystemLocalClient.connect("127.0.0.1", port, token)`. The token is **raw bytes**, not its hex representation. See the [exact file format, generation and code examples](LOCAL_AUTH.md), and TDD #49/#50. This is **not TLS**, cannot be bound externally and is not a substitute for #39.
 
-## Rust-only verified TLS 1.3 mode (source preview)
+## Certificate-verified TLS 1.3 mode in all three SDKs (source preview)
 
-Use `rpc-serve --tls-cert ... --tls-key ... --auth-file ...` with `LocalClient::connect_tls(addr, "localhost", ca_path, &token)`. This is an **explicit TLS-only listener**, not automatic TLS negotiation or a plaintext fallback. The Rust client verifies CA chain and SAN name before transmitting the token. Other SDKs **cannot yet connect to TLS**, and every listener still rejects external/nonloopback binds. See [LOCAL_TLS.md](LOCAL_TLS.md), scoped #51 and parent #39.
+Use `rpc-serve --tls-cert ... --tls-key ... --auth-file ...` with `LocalClient::connect_tls(addr, "localhost", ca_path, &token)`. This is an **explicit TLS-only listener**, not automatic TLS negotiation or a plaintext fallback. The Rust client verifies CA chain and SAN name before transmitting the token. **C#/.NET** now uses `RystemLoopbackClient.ConnectTlsAsync(IPAddress.Loopback, port, "localhost", caFile, token)` and **Node** uses `RystemLocalClient.connectTls({host:"127.0.0.1", port, serverName:"localhost", ca, token})`. Both require an explicit CA and validate SAN/hostname before bearer HELLO, with independently tested invalid-cert/denial cases on all three OS. Every listener still rejects external/nonloopback binds. See [LOCAL_TLS.md](LOCAL_TLS.md), scoped #51/#52 and parent #39.

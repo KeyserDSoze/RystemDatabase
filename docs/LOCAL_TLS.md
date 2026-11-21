@@ -1,8 +1,8 @@
-# TLS 1.3 on loopback — experimental Rust client/server preview
+# TLS 1.3 on loopback — experimental Rust, .NET and Node client/server preview
 
-Implemented in source on `main` under [#51](https://github.com/KeyserDSoze/RystemDatabase/issues/51), a scoped part of [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+Implemented in source on `main`: Rust TLS [#51](https://github.com/KeyserDSoze/RystemDatabase/issues/51), .NET/Node TLS [#52](https://github.com/KeyserDSoze/RystemDatabase/issues/52), and macOS TLS backend fix [#53](https://github.com/KeyserDSoze/RystemDatabase/issues/53), under still-open security parent [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
-**This is real certificate-verified TLS 1.3 but NOT a remotely deployable database service.** The server and Rust client still reject every non-loopback address; mTLS, secure production identity/rotation/revocation, Windows ACL audit, rate limiting, cluster authorization, and TLS support in .NET/Node SDKs are not implemented. The published `v0.1.2` binaries do not contain `rpc-serve` or TLS.
+**This is real certificate-verified TLS 1.3 but NOT a remotely deployable database service.** The server and Rust client still reject every non-loopback address; mTLS, secure production identity/rotation/revocation, Windows ACL audit, rate limiting, cluster authorization and public network access are not implemented. The published `v0.1.2` binaries do not contain `rpc-serve` or TLS.
 
 ## Source build and configuration
 
@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The client uses `rustls 0.23.46`, the ring provider, **only TLS 1.3**, a local CA trust store and strict SAN/name validation. There is no insecure custom verifier or plaintext fallback. A wrong root, wrong server name or TLS handshake failure is an error **before** token transmission. Within the authenticated TLS stream, native RSWP v1 framing, typed binary CRUD and collection ACL status codes remain unchanged.
 
-`LocalClient::connect` and `LocalClient::connect_with_token` remain **plaintext localhost-only developer prototypes**. They cannot communicate with a TLS-only listener. The .NET 10 and TypeScript/Node SDKs currently also use plaintext localhost only, including their optional local-token forms; **do not connect them to this TLS listener** until independent verified TLS transport is implemented and tested.
+`LocalClient::connect` and `LocalClient::connect_with_token` remain **plaintext localhost-only developer prototypes** and cannot communicate with a TLS-only listener. The .NET/Node SDKs now have **separate, verified TLS 1.3 entry points** described below. Their legacy `ConnectAsync`/`ConnectWithTokenAsync`/`connect` still mean explicit plaintext localhost mode; no automatic or silent fallback.
 
 ## Security and negative tests
 
@@ -58,3 +58,57 @@ cargo clippy --workspace --locked --all-targets -- -D warnings
 The real-process integration suite starts the executable with `--listen 127.0.0.1:0` to avoid ephemeral port races and verifies TLS 1.3 Rust-client HELLO/PING/native typed CRUD, wrong trusted CA, wrong hostname, plaintext RSWP against the TLS port, missing/incorrect bearer tokens, malformed/mismatched key/certificate, insecure TLS config, and non-loopback bind denial. The same Cargo suite executes on Linux, macOS and Windows in CI.
 
 **Important remaining risks:** Publicly exposed bind remains prohibited even with TLS; no mTLS, no cluster admission control, no certificate expiry/rotation/revocation workflow, no Windows ACL validation, no per-user rate limits, no full parser fuzzing or comprehensive remote threat model. Compromised local credentials and on-disk files are outside this transport layer's protection. Complete [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) before opening to other machines. [RSWP protocol](WIRE_PROTOCOL.md) | [Local bearer-token policy](LOCAL_AUTH.md) | [Local SDK guide](LOCAL_CLIENTS.md).
+
+
+## C#/.NET 10: verified SslStream, explicit root CA and SAN
+
+```csharp
+using System.Net;
+using RystemDatabase.Client;
+
+byte[] secret = await File.ReadAllBytesAsync("private/write.token");
+// On macOS, enable .NET 10's Network.framework-backed TLS1.3 BEFORE
+// the first SslStream in your application (the SDK also opts in).
+if (OperatingSystem.IsMacOS())
+    AppContext.SetSwitch("System.Net.Security.UseNetworkFramework", true);
+await using var db = await RystemLoopbackClient.ConnectTlsAsync(
+    IPAddress.Loopback, 8790, "localhost", "private/root-ca.pem", secret);
+await db.PingAsync();
+```
+
+The .NET client uses `SslStream` and `SslClientAuthenticationOptions` with `EnabledSslProtocols = Tls13`, explicit `X509ChainPolicy` with `CustomRootTrust`, and the **standard operating-system certificate and DNS SAN validator** (no custom bypass callback). The SDK requires `SslProtocol == Tls13` and `IsAuthenticated && IsEncrypted` before sending bearer token HELLO. Public CA PEM is loaded with `X509CertificateLoader.LoadCertificateFromFile`, which does not require the CA's private key.
+
+**macOS .NET 10:** legacy SecureTransport does not support TLS1.3; the SDK opts into Apple's Network.framework using `AppContext.SetSwitch("System.Net.Security.UseNetworkFramework", true)`. If your application already initialized SslStream, set this switch at **process startup**, or use environment variable `DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1`; CI sets this for macOS. No TLS1.2 fallback is permitted. This behavior is tracked and tested in #53.
+
+The test fixture CA intentionally has no CRL. The client therefore sets `RevocationMode = NoCheck` **only within this experimental localhost prototype**. Proper revocation, pinning/rotation policies and mTLS are remaining #39 requirements.
+
+## Node.js 22+: certificate-verified node:tls client
+
+```typescript
+import { readFileSync } from "node:fs";
+import { RystemLocalClient } from "./src/client.ts";
+
+const db = await RystemLocalClient.connectTls({
+  host: "127.0.0.1",
+  port: 8790,
+  serverName: "localhost",
+  ca: readFileSync("private/root-ca.pem", "utf8"),
+  token: new Uint8Array(readFileSync("private/write.token")),
+});
+try {
+  await db.ping();
+  await db.put("orders", "o42", new Map([
+    ["paid", true], ["amountInCents", 1234n],
+  ]));
+} finally {
+  await db.close();
+}
+```
+
+Node uses `node:tls`, `minVersion: "TLSv1.3"`, `maxVersion: "TLSv1.3"`, `rejectUnauthorized: true`, explicit CA, and the `serverName` SNI/DNS SAN hostname. It sends RSWP HELLO with raw token **only after** an authorized `secureConnect` and confirms the negotiated protocol is `TLSv1.3`. A wrong CA, hostname, expired/not-yet-valid certificate or failed TLS handshake aborts without exposing the token; there is no custom verifier or plaintext fallback.
+
+## Cross-language process-level security regressions
+
+`TlsContract.cs` and `tests/tls.test.mjs` launch the **real Rust executable** on Linux, macOS and Windows and verify successful TLS HELLO/PING, nested typed binary CRUD (bytes, references, i64, Unicode), concurrent requests, collection read/write denial, wrong CA/SAN, malformed credential, plaintext-to-TLS refusal and persistence across separate server processes. Additional **public** expiry fixtures ensure both languages reject server certificates whose notBefore/notAfter window excludes the current date, even when CA and SAN match. An RSWP Unauthorized response is explicitly flushed before the Rust server closes its TLS stream (#54).
+
+**These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. No mTLS, centralized identities, certificate/key rotation, revocation workflow, secure connection pools, released NuGet/npm SDK packages or service discovery exist. [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remains open.

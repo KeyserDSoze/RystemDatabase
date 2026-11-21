@@ -27,7 +27,7 @@ try {
 }
 ```
 
-**Important limitations:** localhost-only plaintext (optional local bearer-token ACL, TLS/remote authentication NOT implemented), no user-provided AbortSignal, connection pools, browser transport, shard routing, automatic idempotent retry, official npm SDK publication, or production resource management. The separate `npm/cli` is a native binary installer wrapper and NOT this SDK. Failed writes may have uncertain commit outcomes. Parent [#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28) remains OPEN; scoped live-connection [#46](https://github.com/KeyserDSoze/RystemDatabase/issues/46).
+**Important limitations:** localhost-only plaintext or separate verified TLS1.3 (optional local bearer-token ACL; secure remote authentication NOT implemented), no user-provided AbortSignal, connection pools, browser transport, shard routing, automatic idempotent retry, official npm SDK publication, or production resource management. The separate `npm/cli` is a native binary installer wrapper and NOT this SDK. Failed writes may have uncertain commit outcomes. Parent [#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28) remains OPEN; scoped live-connection [#46](https://github.com/KeyserDSoze/RystemDatabase/issues/46).
 
 [Local usage](../../../../docs/LOCAL_CLIENTS.md) | [Typed value format](../../../../docs/RDB_TYPED_PROTOCOL.md)
 
@@ -36,4 +36,18 @@ try {
 `RystemLocalClient.connect("127.0.0.1", port, Uint8Array token)` accepts one **32-byte raw** secret and sends `01 00 00 20` + token during HELLO. Wrong/missing credentials and disallowed collection operations raise `RystemRpcError` with `status=6`. Token handling and the server's private `--auth-file` rules are documented in [LOCAL_AUTH.md](../../../../docs/LOCAL_AUTH.md). This is **not encrypted TCP** or a production remote client.
 
 
-**TLS compatibility note:** the native server now supports opt-in TLS 1.3 via `--tls-cert --tls-key --auth-file` for the **Rust client only**. This Node `RystemLocalClient` still uses local plaintext TCP. It cannot connect to a TLS-only listener; certificate-verified Node `tls` transport remains future work (#39). [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
+## Verified TLS 1.3 mode (localhost only)
+
+```typescript
+import { readFileSync } from "node:fs";
+import { RystemLocalClient } from "./src/client.ts";
+const db = await RystemLocalClient.connectTls({
+  host: "127.0.0.1", port: 8790, serverName: "localhost",
+  ca: readFileSync("private/root-ca.pem", "utf8"),
+  token: new Uint8Array(readFileSync("private/write.token"))
+});
+try { await db.ping(); } finally { await db.close(); }
+```
+
+`connectTls` uses `node:tls`, **only TLS1.3**, `rejectUnauthorized: true`, explicit CA and standard SAN verification. RSWP bearer HELLO is sent only **after an authorized secureConnect**. Real Rust TLS process tests reject wrong root/name, expired/not-yet-valid certificate, invalid token and plaintext fallback, across Linux/macOS/Windows (#52/#54). The original `connect` remains plaintext local mode; no remote bind, mTLS, pooling or published npm SDK. [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
+

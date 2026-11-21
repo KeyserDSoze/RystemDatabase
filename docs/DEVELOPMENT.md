@@ -24,7 +24,7 @@ Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/re
 
 A main push automatically publishes a prerelease only if the semver release corresponding to `npm/cli/package.json` does not already exist; later main pushes at the same version do not replace immutable assets. A matching `vX.Y.Z` tag can also launch the workflow. The release job verifies tests, builds native files, uploads SHA256SUMS to GitHub Releases and publishes a GHCR image. Bump Cargo workspace and npm package versions together before the next version. npm publishing needs `NPM_TOKEN` and ownership of the `rystemdb` package on npm; without the token the package step is intentionally skipped. Check release asset smoke tests before advertising an installer.
 
-The native CLI stores binary documents; the HTTP `serve` endpoint remains health-only. A separate experimental `rpc-serve` on main serves binary CRUD over **localhost only** with no TLS/auth and is **not in the existing v0.1.2 release**. Never deploy it as a production network database server.
+The native CLI stores binary documents; HTTP `serve` remains health-only. Experimental `rpc-serve` on main serves binary CRUD over **localhost only**, with optional token/ACL and TLS1.3 certificate-verified modes, and is **not in existing v0.1.2**. Never deploy it as a production network database server.
 
 ## Crash-injection safety
 
@@ -40,7 +40,7 @@ dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemData
 dotnet build src/libraries/dotnet/RystemDatabase.EntityFrameworkCore/RystemDatabase.EntityFrameworkCore.csproj --configuration Release
 ```
 
-These commands only validate binary frame codecs and EF build scaffolding; no remote SDK/server integration is yet implemented. All tests must run in CI on main; do not ship unauthenticated RPC servers.
+Wire/typed codec tests and EF scaffold are separate from **real Rust-process network SDK interoperability** run in the Linux/macOS/Windows .NET and Node CI jobs. No externally available authenticated server is implemented or released.
 
 ## Local-only binary RPC test (unreleased on main)
 
@@ -102,4 +102,14 @@ cargo test --workspace --locked --all-targets
 cargo clippy --workspace --locked --all-targets -- -D warnings
 ```
 
-[LOCAL_TLS.md](LOCAL_TLS.md) describes the opt-in TLS-only server with `--tls-cert`/`--tls-key`/`--auth-file`, CA+server-name verification in `LocalClient::connect_tls`, intentionally **public test certificates**, and why all nonloopback binds remain denied. The existing Node/.NET clients are not TLS-enabled.
+[LOCAL_TLS.md](LOCAL_TLS.md) describes the opt-in TLS-only server with `--tls-cert`/`--tls-key`/`--auth-file`, CA+server-name verification in `LocalClient::connect_tls`, intentionally **public test certificates**, and why all nonloopback binds remain denied. The .NET 10 and Node 22 clients now also have separate CA/SAN-verified TLS1.3 APIs and test suites (#52); all remain localhost-only, not production remote transport.
+
+## Cross-language TLS 1.3 source-only end-to-end gate (#52–54)
+
+```sh
+cargo build --locked -p rystemdb-cli
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- target/debug/rystemdb
+RYSTEMDB_BINARY="$(pwd)/target/debug/rystemdb" bash -c 'cd src/libraries/typescript/rystemdb-client && npm test'
+```
+
+CI runs the actual Rust server subprocess and TLS tests on Linux, macOS and Windows. On Windows use `target/debug/rystemdb.exe`; on macOS .NET 10 needs `DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1` before process startup (the SDK also opts in) for TLS1.3. The regression suites reject wrong CA/hostname, expired and future certificates, malformed tokens and plaintext traffic on TLS-only ports. Server flushes RSWP status 6 before closing TLS (#54). Full instructions: [LOCAL_TLS.md](LOCAL_TLS.md). **#39 remains open for nonlocal production security.**

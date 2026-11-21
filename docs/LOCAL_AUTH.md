@@ -2,7 +2,7 @@
 
 **Source-only, localhost-only prototype** implemented under [#49](https://github.com/KeyserDSoze/RystemDatabase/issues/49) (native server) and [#50](https://github.com/KeyserDSoze/RystemDatabase/issues/50) (Rust/.NET/Node client interop). Parent [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remains **OPEN**.
 
-**Critical:** this is NOT TLS 1.3, mTLS, a production credential system, or secure remote access. **The legacy local TCP mode transmits tokens in plaintext** and could be intercepted or replayed by a sufficiently privileged local adversary. An **opt-in verified TLS 1.3 mode is now supported by the Rust server and Rust SDK only** ([LOCAL_TLS.md](LOCAL_TLS.md)), still limited to localhost; no mTLS/remote release. Do not expose, tunnel, port-forward or reverse-proxy this endpoint to other machines. A server **always rejects non-loopback** bind addresses, even with `--auth-file`. The current published `v0.1.2` contains only the local document CLI, NOT this server or these SDK features.
+**Critical:** this is NOT TLS 1.3, mTLS, a production credential system, or secure remote access. **The legacy local TCP mode transmits tokens in plaintext** and could be intercepted or replayed by a sufficiently privileged local adversary. An **opt-in verified TLS 1.3 mode is now supported by the Rust server and Rust/.NET/Node SDKs** ([LOCAL_TLS.md](LOCAL_TLS.md)), still limited to localhost; no mTLS/remote release. Do not expose, tunnel, port-forward or reverse-proxy this endpoint to other machines. A server **always rejects non-loopback** bind addresses, even with `--auth-file`. The current published `v0.1.2` contains only the local document CLI, NOT this server or these SDK features.
 
 ## Development configuration
 

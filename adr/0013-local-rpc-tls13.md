@@ -14,6 +14,10 @@ Test through actual spawned Rust server processes with an intentionally untruste
 
 ## Consequences and non-goals
 
-This is **not production-ready remote security**, so *all* non-loopback binds stay denied. The Rust client is synchronous; .NET and Node live TLS clients, mTLS, token expiry/revocation/rotation, Windows ACL audit, secure provisioning, quotas/rate limits, performance and cluster identity are separate work under #39, #27, #28. No v0.1.2 release assets were changed.
+This is **not production-ready remote security**, so *all* non-loopback binds stay denied. The Rust client is synchronous; mTLS, token expiry/revocation/rotation, Windows ACL audit, secure provisioning, quotas/rate limits, performance and cluster identity are separate work under #39, #27, #28. No v0.1.2 release assets were changed.
 
 [Setup and threat model](../docs/LOCAL_TLS.md) | [Local token ACL](../docs/LOCAL_AUTH.md).
+
+## Follow-up — independently implemented cross-language TLS1.3 (#52–54)
+
+The .NET 10 client now uses `SslStream` with explicit custom-root CA and native SAN validation; Node 22 uses `node:tls` with min/max TLSv1.3, `rejectUnauthorized:true`, explicit CA and DNS name. Both enforce TLS1.3 and send bearer HELLO **only after verifying the peer**. The macOS .NET 10 backend needs Network.framework opt-in (#53). The server flushes status 6 before tearing down a denied TLS session (#54). These client transports run actual Rust process tests across Linux/macOS/Windows, rejecting incorrect CA/name, expired and future leaf certs, invalid credentials and plaintext fallback. This does **not** relax the permanent nonloopback bind restriction or close security parent #39. [Usage](../docs/LOCAL_TLS.md).
