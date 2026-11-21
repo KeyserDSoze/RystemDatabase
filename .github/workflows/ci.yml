@@ -30,14 +30,20 @@ jobs:
       - name: Release build
         run: cargo build --release --locked -p rystemdb-cli
   npm:
-    name: npm installer + TypeScript live RPC
-    runs-on: ubuntu-latest
+    name: npm installer + TypeScript live RPC (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm test
+      - name: Native installer npm tests
+        if: runner.os == 'Linux'
+        run: npm test
         working-directory: npm/cli
       - name: Build actual native Rust server for Node interop
         run: cargo build --locked -p rystemdb-cli
@@ -45,13 +51,18 @@ jobs:
         run: npm test
         working-directory: src/libraries/typescript/rystemdb-client
         env:
-          RYSTEMDB_BINARY: ${{ github.workspace }}/target/debug/rystemdb
-      - name: Validate npm package
+          RYSTEMDB_BINARY: ${{ github.workspace }}/target/debug/rystemdb${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Validate native installer npm package
+        if: runner.os == 'Linux'
         run: npm pack --dry-run
         working-directory: npm/cli
   dotnet:
-    name: .NET typed SDK + live Rust RPC
-    runs-on: ubuntu-latest
+    name: .NET typed SDK + live Rust RPC (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -60,7 +71,10 @@ jobs:
       - name: Build actual native Rust server for C# interop
         run: cargo build --locked -p rystemdb-cli
       - name: .NET protocol and live RPC conformance
-        run: dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- target/debug/rystemdb
+        shell: bash
+        env:
+          RYSTEMDB_BINARY: ${{ github.workspace }}/target/debug/rystemdb${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- "$RYSTEMDB_BINARY"
       - name: Build EF Core library scaffold
         run: dotnet build src/libraries/dotnet/RystemDatabase.EntityFrameworkCore/RystemDatabase.EntityFrameworkCore.csproj --configuration Release
 
