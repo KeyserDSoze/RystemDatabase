@@ -183,7 +183,7 @@ function decodeValue(r: Reader, depth: number): RdbValue {
     case 3: return r.i64();
     case 4: return r.f64();
     case 5: return r.text();
-    case 6: return r.take(r.u32()).slice();
+    case 6: return Uint8Array.from(r.take(r.u32()));
     case 7: {
       const count = r.u32();
       if (count > r.remaining) throw new Error("truncated RDB array");

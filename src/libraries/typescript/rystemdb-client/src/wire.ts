@@ -71,6 +71,8 @@ export function decode(input: Uint8Array): Frame {
     operation: operation as Operation,
     status,
     requestId: view.getBigUint64(12, false),
-    payload: input.slice(HEADER_LEN),
+    // Buffer.slice() produces a Buffer subclass when a Node socket supplied
+    // the input. Canonicalize to the public Uint8Array SDK type.
+    payload: Uint8Array.from(input.subarray(HEADER_LEN)),
   };
 }
