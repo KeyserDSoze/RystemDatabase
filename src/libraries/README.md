@@ -4,12 +4,12 @@ Four project directories, all developed directly on `main`:
 
 | Library | Path | Stage | Issue |
 | --- | --- | --- | --- |
-| Rust | `rust/rystemdb-client` | Experimental **synchronous** `LocalClient` with HELLO/PING/typed CRUD over a real **loopback TCP** server, tested; no async/pool/TLS | #26 |
+| Rust | `rust/rystemdb-client` | Experimental **synchronous** `LocalClient` with verified **TLS1.3 on loopback** or explicit plaintext local mode, HELLO/typed CRUD; no async/pool/mTLS or secure remote | #26 |
 | .NET | `dotnet/RystemDatabase.Client` | Async `RystemLoopbackClient`: live native HELLO/PING/typed CRUD over persistent localhost TCP, tested against real Rust process; no TLS/pool/NuGet | #27/#45 |
 | TypeScript | `typescript/rystemdb-client` | Async `RystemLocalClient`: live native TCP with concurrent correlated requests, typed CRUD and real Rust subprocess tests; localhost only | #28/#46 |
 | EF Core | `dotnet/RystemDatabase.EntityFrameworkCore` | Buildable .NET project scaffold only, **not an EF Core provider** | #29 |
 
-The `src/rystemdb-protocol` crate is the binary frame reference (#24); the localhost server and all three SDK clients now exchange real typed CRUD. They also support **opt-in local-token HELLO** and explicit collection read/write ACLs (#49/#50). **Remote TLS/mTLS, audited security and SDK publishing are not implemented** (#39).
+The `src/rystemdb-protocol` crate is the binary frame reference (#24); the localhost server and all three SDK clients now exchange real typed CRUD. They also support **opt-in local-token HELLO** and explicit collection read/write ACLs (#49/#50). **Rust-only local certificate-verified TLS1.3 exists** (#51); **.NET/Node verified TLS, remote TLS/mTLS, audited production security and SDK publishing are not implemented** (#39).
 
 Conformance source/tests:
 - Rust: `src/rystemdb-protocol/tests/wire_contract.rs`
@@ -24,3 +24,5 @@ See [wire protocol](../../docs/WIRE_PROTOCOL.md), [ADR 0006](../../adr/0006-bina
 [Local SDK usage and real-process tests](../../docs/LOCAL_CLIENTS.md). All implementations are experimental, source-only and intentionally restricted to numeric localhost addresses without TLS/auth.
 
 The optional authenticated loopback mode is documented in [LOCAL_AUTH.md](../../docs/LOCAL_AUTH.md). The legacy anonymous localhost mode remains available for backward compatibility; **neither mode is an authenticated TLS remote service**.
+
+For the Rust-only TLS 1.3 transport and threats, see [LOCAL_TLS.md](../../docs/LOCAL_TLS.md). Never use the public test certificate/key for deployments.

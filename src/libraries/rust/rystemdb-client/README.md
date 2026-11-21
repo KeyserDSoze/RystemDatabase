@@ -36,3 +36,7 @@ The Rust client uses `rystemdb-protocol::crud::encode_key` for requests (the nat
 ## Opt-in local authentication
 
 `LocalClient::connect_with_token(addr, &token)` sends the documented 36-byte authenticated HELLO. Read the raw `[u8; 32]` from a private client credential file, never put tokens in argv or logs. Wrong tokens and forbidden collection operations return `ClientError::Rejected(6)`. The server must be started with `--auth-file`. See [LOCAL_AUTH.md](../../../../docs/LOCAL_AUTH.md). **No TLS, rotation or remote access.**
+
+## Verified TLS 1.3 on localhost (source preview)
+
+The Rust client now exposes `LocalClient::connect_tls(addr, "localhost", trusted_ca_path, &raw32_token)`, which builds a TLS1.3-only session with **strict CA chain and DNS SAN verification** before sending the token or any RSWP frame. It works only with `rpc-serve --tls-cert ... --tls-key ... --auth-file ...`; plaintext connection methods never silently upgrade. Actual certificate validation, wrong-CA/wrong-name refusal and typed CRUD are exercised in `cargo test -p rystemdb-cli --test rpc_tls` on all 3 OS. See [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md). No secure remote bind, mTLS, async pool or released SDK.

@@ -151,3 +151,31 @@ fn tdd_tls_configuration_never_enables_nonloopback_or_wildcard_binding() {
         assert!(!data.exists(),"TLS mode unexpectedly enabled external listener");
     }
 }
+
+#[test]
+fn tdd_tls_key_file_requires_private_unlinked_permissions_on_unix() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{symlink,PermissionsExt};
+        let f=Fixture::new();
+        let data=f.root.join("must-not-open-with-unsafe-key");
+        fs::set_permissions(&f.key,fs::Permissions::from_mode(0o644)).unwrap();
+        let r=Command::new(env!("CARGO_BIN_EXE_rystemdb"))
+            .args(["rpc-serve","--data"]).arg(&data)
+            .args(["--auth-file"]).arg(&f.policy)
+            .arg("--tls-cert").arg(&f.cert).arg("--tls-key").arg(&f.key)
+            .output().unwrap();
+        assert!(!r.status.success(),"loose Unix key permissions allowed TLS startup");
+        assert!(!data.exists(),"bad TLS key created storage");
+        fs::set_permissions(&f.key,fs::Permissions::from_mode(0o600)).unwrap();
+        let link=f.root.join("link-key.pem");
+        symlink(&f.key,&link).unwrap();
+        let r=Command::new(env!("CARGO_BIN_EXE_rystemdb"))
+            .args(["rpc-serve","--data"]).arg(&data)
+            .args(["--auth-file"]).arg(&f.policy)
+            .arg("--tls-cert").arg(&f.cert).arg("--tls-key").arg(&link)
+            .output().unwrap();
+        assert!(!r.status.success(),"symlinked key was accepted");
+        assert!(!data.exists());
+    }
+}

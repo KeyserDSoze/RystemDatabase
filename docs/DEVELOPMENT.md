@@ -93,3 +93,13 @@ cargo test -p rystemdb-cli --locked --test rpc_auth_sdk
 ```
 
 Use [LOCAL_AUTH.md](LOCAL_AUTH.md) for strict private-file policies, HELLO token payload, ACL semantics and limitations. This is an **experimental plaintext localhost mode**, not TLS: no external binding or remotely safe authentication is available.
+
+## Rust-only verified local TLS 1.3 regression (#51)
+
+```sh
+cargo test -p rystemdb-cli --locked --test rpc_tls
+cargo test --workspace --locked --all-targets
+cargo clippy --workspace --locked --all-targets -- -D warnings
+```
+
+[LOCAL_TLS.md](LOCAL_TLS.md) describes the opt-in TLS-only server with `--tls-cert`/`--tls-key`/`--auth-file`, CA+server-name verification in `LocalClient::connect_tls`, intentionally **public test certificates**, and why all nonloopback binds remain denied. The existing Node/.NET clients are not TLS-enabled.

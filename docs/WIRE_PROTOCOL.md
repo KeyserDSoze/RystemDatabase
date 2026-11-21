@@ -42,11 +42,11 @@ Long queries and data streams need bounded multi-frame chunking, cancellation, d
 
 ## Optional local-only authenticated HELLO
 
-By default (legacy localhost development), HELLO request payload is `01 00`. When the Rust server starts with `--auth-file`, HELLO must instead contain `01 00 00 20` followed by exactly **32 raw bearer-token bytes**. Successful HELLO responds with `01 00`. Missing/incorrect credentials receive status `6` and the connection closes; authenticated sessions receive per-collection `r`/ `w` grants, and unauthorized GET/PUT/DELETE return status `6` without accessing the store. This is **plaintext localhost**, not TLS or secure remote authentication; full security and Windows ACL gates remain open (#39). See [LOCAL_AUTH.md](LOCAL_AUTH.md).
+By default (legacy localhost development), HELLO request payload is `01 00`. When the Rust server starts with `--auth-file`, HELLO must instead contain `01 00 00 20` followed by exactly **32 raw bearer-token bytes**. Successful HELLO responds with `01 00`. Missing/incorrect credentials receive status `6` and the connection closes; authenticated sessions receive per-collection `r`/ `w` grants, and unauthorized GET/PUT/DELETE return status `6` without accessing the store. Plaintext localhost remains available for the older clients; an **opt-in verified TLS 1.3 transport between Rust client/server** now exists ([LOCAL_TLS.md](LOCAL_TLS.md)). This is still **not remote deployment security**, and full mTLS/security and Windows ACL gates remain open (#39). See [LOCAL_AUTH.md](LOCAL_AUTH.md).
 
 ## Transport, safety and performance
 
-Candidate transport for point queries: **persistent TCP** with **TLS 1.3 + authenticated clients** before any non-loopback availability. Multiplexing and pooling must be implemented and benchmarked; there is no universally fastest protocol. Compare RSWP/TCP against gRPC/Protobuf and QUIC with the same payloads, p50/p95/p99 latency, bytes/request, CPU, memory, loss and WAN RTT. Avoid unmeasured superiority claims.
+Experimental point queries now use **persistent localhost TCP**; Rust client/server can opt into verified **TLS 1.3 with bearer-token ACL** ([LOCAL_TLS.md](LOCAL_TLS.md)). **Non-loopback remains prohibited.** Multiplexing and pooling must be implemented and benchmarked; there is no universally fastest protocol. Compare RSWP/TCP against gRPC/Protobuf and QUIC with the same payloads, p50/p95/p99 latency, bytes/request, CPU, memory, loss and WAN RTT. Avoid unmeasured superiority claims.
 
 This frame does not include its own MAC/CRC: authenticated TLS provides integrity in the remote transport; the storage format has a separate CRC to detect accidental file corruption. Do not confuse checksum validation with secure authentication.
 

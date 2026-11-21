@@ -34,3 +34,6 @@ try {
 ## Opt-in authenticated localhost HELLO
 
 `RystemLocalClient.connect("127.0.0.1", port, Uint8Array token)` accepts one **32-byte raw** secret and sends `01 00 00 20` + token during HELLO. Wrong/missing credentials and disallowed collection operations raise `RystemRpcError` with `status=6`. Token handling and the server's private `--auth-file` rules are documented in [LOCAL_AUTH.md](../../../../docs/LOCAL_AUTH.md). This is **not encrypted TCP** or a production remote client.
+
+
+**TLS compatibility note:** the native server now supports opt-in TLS 1.3 via `--tls-cert --tls-key --auth-file` for the **Rust client only**. This Node `RystemLocalClient` still uses local plaintext TCP. It cannot connect to a TLS-only listener; certificate-verified Node `tls` transport remains future work (#39). [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).

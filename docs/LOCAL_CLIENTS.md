@@ -2,7 +2,7 @@
 
 This page describes the **source-only localhost TCP client milestone**, developed directly on main under [#45](https://github.com/KeyserDSoze/RystemDatabase/issues/45), [#46](https://github.com/KeyserDSoze/RystemDatabase/issues/46), and parent [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27)/[#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28).
 
-**Security warning:** the Rust RSWP RPC server does **not implement TLS, secure remote authentication, or public network policy**. An **optional local-only bearer-token HELLO plus collection ACL** is now available ([LOCAL_AUTH.md](LOCAL_AUTH.md)), but tokens are sent as plaintext over loopback. It will only bind numeric loopback. All three SDKs reject non-loopback connection targets. Do not use port-forwarding or public reverse proxies to bypass that restriction. A production remote client requires [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+**Security warning:** the Rust RSWP RPC server does **not implement secure remote authentication or public network policy**. An **optional bearer-token HELLO plus local collection ACL** is available ([LOCAL_AUTH.md](LOCAL_AUTH.md)). The **Rust server/Rust SDK** now also implement [certificate-verified TLS 1.3 on localhost](LOCAL_TLS.md); **.NET and Node clients still use plaintext local TCP** and must not be treated as remote-safe. It will only bind numeric loopback. All three SDKs reject non-loopback connection targets. Do not use port-forwarding or public reverse proxies to bypass that restriction. A production remote client requires [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 **Release warning:** the current published native release `v0.1.2` predates this RPC server and these SDK connection implementations. Build `rystemdb` from main to run this example. None of the .NET/TypeScript client packages is published to NuGet/npm at this point; npm/cli is an independent native-binary launcher.
 
@@ -91,3 +91,7 @@ See [RSWP framing](WIRE_PROTOCOL.md), [CRUD key spec](CRUD_KEY_PROTOCOL.md), [na
 ## Authenticated localhost mode (source-only, opt-in)
 
 `rystemdb rpc-serve --auth-file ./private/acl.txt` requires a private-file 32-byte token with explicit `r`, `w` or `rw` permissions per collection; it denies anonymous HELLO and unauthorized operations with status `6`. The Rust, .NET and Node SDKs now expose `LocalClient::connect_with_token(addr, &token)`, `RystemLoopbackClient.ConnectWithTokenAsync(IPAddress.Loopback, port, token)` and `RystemLocalClient.connect("127.0.0.1", port, token)`. The token is **raw bytes**, not its hex representation. See the [exact file format, generation and code examples](LOCAL_AUTH.md), and TDD #49/#50. This is **not TLS**, cannot be bound externally and is not a substitute for #39.
+
+## Rust-only verified TLS 1.3 mode (source preview)
+
+Use `rpc-serve --tls-cert ... --tls-key ... --auth-file ...` with `LocalClient::connect_tls(addr, "localhost", ca_path, &token)`. This is an **explicit TLS-only listener**, not automatic TLS negotiation or a plaintext fallback. The Rust client verifies CA chain and SAN name before transmitting the token. Other SDKs **cannot yet connect to TLS**, and every listener still rejects external/nonloopback binds. See [LOCAL_TLS.md](LOCAL_TLS.md), scoped #51 and parent #39.

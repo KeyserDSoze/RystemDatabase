@@ -12,7 +12,7 @@ cargo run --locked -p rystemdb-cli -- rpc-serve \
 
 `--listen` defaults to `127.0.0.1:8790`. Any non-loopback address (including `0.0.0.0`, `::`, and all external IPv4/IPv6 addresses) is **rejected before opening/creating the database**. The existing `rystemdb serve` command is still the separate HTTP health-only endpoint; it does **not** serve documents.
 
-**WARNING: no TLS or secure remote authentication.** An **optional local-only token/collection ACL** is available with `--auth-file`, but the token travels as plaintext over loopback. Use only on trusted localhost and do not tunnel/port-forward externally. Production TLS1.3 identity/authentication/authorization remains tracked in [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+**WARNING: no secure remote access.** An **optional local-token/collection ACL** is available with `--auth-file`. The **Rust server and SDK now support opt-in certificate-verified TLS1.3** with `--tls-cert`, `--tls-key` and `--auth-file` ([LOCAL_TLS.md](LOCAL_TLS.md)); the old local mode remains plaintext, and .NET/Node clients do not yet implement TLS. Never tunnel/port-forward externally. Full remote identity/mTLS remains tracked in [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 ## Wire frame
 
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The client's request ID is incremented on the same open connection. It has 3-second I/O timeouts; an I/O error or unexpected response returns an explicit error. PUT/DELETE transport failures may leave the remote commit outcome *uncertain*, so retries cannot be assumed safe.
+The Rust client now additionally exposes `LocalClient::connect_tls(addr, "localhost", trusted_ca_path, &token)` for authenticated TLS1.3 with CA/name validation **before** exchanging RSWP. See [LOCAL_TLS.md](LOCAL_TLS.md). The client's request ID is incremented on the same open connection. It has 3-second I/O timeouts; an I/O error or unexpected response returns an explicit error. PUT/DELETE transport failures may leave the remote commit outcome *uncertain*, so retries cannot be assumed safe.
 
 The SDK connection is tested against a **real subprocess**, with nested typed documents, missing keys, DELETE tombstones, and rejection of external addresses in `src/rystemdb-cli/tests/rpc_rust_sdk.rs` (#26).
 

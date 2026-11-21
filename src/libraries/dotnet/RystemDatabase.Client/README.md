@@ -32,3 +32,6 @@ var found = await db.GetAsync("users", "u42");
 ## Opt-in authenticated localhost HELLO
 
 `ConnectWithTokenAsync(IPAddress.Loopback, port, byte[] token, CancellationToken)` accepts a raw **32-byte** token, sends authenticated HELLO and exposes status `6` for wrong credentials/forbidden collection operations via `RystemRpcException`. The Rust server must use `--auth-file` with an explicit per-collection `r/w` ACL. This is plaintext localhost development auth, not TLS or a published NuGet client. See [LOCAL_AUTH.md](../../../../docs/LOCAL_AUTH.md).
+
+
+**TLS compatibility note:** the native server now supports opt-in TLS 1.3 via `--tls-cert --tls-key --auth-file` for the **Rust client only**. This .NET `RystemLoopbackClient` still uses local plaintext TCP. It cannot connect to a TLS-only listener; independent verified `SslStream` support is pending under [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39). [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
