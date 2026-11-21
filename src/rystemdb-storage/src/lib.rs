@@ -1,58 +1,409 @@
-//! RED TDD skeleton. The persistent document segment store is not implemented yet.
-//! Deliberately failing integration tests define the expected storage contract.
-use rystemdb_core::{CodecError, Value};
+//! Experimental single-process append-only document storage.
+//!
+//! A durable PUT/DELETE operation is a *single* checksummed frame that is synced
+//! before the in-memory ID -> segment/offset index is updated. On restart the
+//! index is rebuilt from the log; only an incomplete frame in the LAST segment
+//! can be truncated. Complete corrupt frames and damage to older segments fail
+//! closed. This is not yet a multi-process, multi-document ACID engine.
+use rystemdb_core::{decode, encode, CodecError, Value};
+use std::collections::BTreeMap;
 use std::fmt;
-use std::io;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+
+const MAGIC: &[u8; 4] = b"RYSF";
+const VERSION: u8 = 1;
+const PUT: u8 = 1;
+const DELETE: u8 = 2;
+const HEADER_SIZE: usize = 20;
+const MAX_ID_BYTES: usize = 1024;
+const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_SEGMENT_LIMIT: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum StoreError {
     Io(io::Error),
     Codec(CodecError),
     InvalidId,
+    InvalidSegmentLimit,
     Corrupt(String),
-    Unsupported,
+    Poisoned,
 }
 
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            StoreError::Io(err) => write!(f, "storage I/O error: {err}"),
+            StoreError::Codec(err) => write!(f, "document codec error: {err}"),
+            StoreError::InvalidId => write!(f, "document ID must be 1..=1024 UTF-8 bytes"),
+            StoreError::InvalidSegmentLimit => write!(f, "segment limit must be at least 64 bytes"),
+            StoreError::Corrupt(message) => write!(f, "corrupt segment: {message}"),
+            StoreError::Poisoned => write!(f, "store write failed; close and reopen to recover"),
+        }
     }
 }
-impl std::error::Error for StoreError {}
+impl std::error::Error for StoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            StoreError::Io(err) => Some(err),
+            StoreError::Codec(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+impl From<io::Error> for StoreError {
+    fn from(error: io::Error) -> Self { Self::Io(error) }
+}
+impl From<CodecError> for StoreError {
+    fn from(error: CodecError) -> Self { Self::Codec(error) }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Location {
+    segment: u64,
+    offset: u64,
+}
 
 #[derive(Debug)]
 pub struct DocumentStore {
-    _root: PathBuf,
+    root: PathBuf,
+    active: File,
+    active_id: u64,
+    segment_limit: u64,
+    entries: BTreeMap<String, Location>,
+    poisoned: bool,
 }
 
 impl DocumentStore {
+    /// Open an experimental *single-writer* store, rebuilding its ID index.
     pub fn open(root: impl AsRef<Path>) -> Result<Self, StoreError> {
-        std::fs::create_dir_all(&root).map_err(StoreError::Io)?;
-        Ok(Self { _root: root.as_ref().to_path_buf() })
+        Self::open_with_segment_limit(root, DEFAULT_SEGMENT_LIMIT)
     }
 
-    pub fn open_with_segment_limit(root: impl AsRef<Path>, _limit: u64) -> Result<Self, StoreError> {
-        Self::open(root)
+    /// Same as open, with an optional small limit for bounded files or tests.
+    pub fn open_with_segment_limit(root: impl AsRef<Path>, limit: u64) -> Result<Self, StoreError> {
+        if limit < 64 {
+            return Err(StoreError::InvalidSegmentLimit);
+        }
+        let root = root.as_ref().to_path_buf();
+        fs::create_dir_all(&root)?;
+        let mut ids = Vec::new();
+        for dir_entry in fs::read_dir(&root)? {
+            let dir_entry = dir_entry?;
+            let name = dir_entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("segment-") {
+                let id = parse_segment_name(&name).ok_or_else(|| {
+                    StoreError::Corrupt(format!("unrecognized segment filename: {name}"))
+                })?;
+                if !dir_entry.file_type()?.is_file() {
+                    return Err(StoreError::Corrupt(format!("segment {id} is not a regular file")));
+                }
+                ids.push(id);
+            }
+        }
+        ids.sort_unstable();
+        for (index, &id) in ids.iter().enumerate() {
+            if id != index as u64 + 1 {
+                return Err(StoreError::Corrupt("missing or duplicated segment in sequence".into()));
+            }
+        }
+        if ids.is_empty() {
+            create_segment(&root, 1)?;
+            ids.push(1);
+        }
+
+        let mut entries = BTreeMap::new();
+        let active_id = *ids.last().expect("at least one segment exists");
+        for id in &ids {
+            let path = segment_path(&root, *id);
+            let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+            let length = file.metadata()?.len();
+            let mut offset = 0_u64;
+            while offset < length {
+                match read_frame(&mut file, offset, length)? {
+                    FrameRead::Incomplete if *id == active_id => {
+                        file.set_len(offset)?;
+                        file.sync_all()?;
+                        break;
+                    }
+                    FrameRead::Incomplete => {
+                        return Err(StoreError::Corrupt(format!(
+                            "incomplete frame at segment {id} offset {offset} (not final segment)"
+                        )));
+                    }
+                    FrameRead::Complete { id: document_id, value, length: frame_len } => {
+                        if value.is_some() {
+                            entries.insert(document_id, Location { segment: *id, offset });
+                        } else {
+                            entries.remove(&document_id);
+                        }
+                        offset = offset.checked_add(frame_len).ok_or_else(|| {
+                            StoreError::Corrupt("segment offset overflow".into())
+                        })?;
+                    }
+                }
+            }
+        }
+
+        let active = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(segment_path(&root, active_id))?;
+        Ok(Self {
+            root, active, active_id, segment_limit: limit, entries, poisoned: false,
+        })
     }
 
-    pub fn put(&mut self, _id: &str, _value: &Value) -> Result<(), StoreError> {
-        Err(StoreError::Unsupported)
+    /// PUT replaces any existing document under the same ID. Success means
+    /// the complete frame has been synced before the method returned.
+    pub fn put(&mut self, id: &str, value: &Value) -> Result<(), StoreError> {
+        validate_id(id)?;
+        let encoded = encode(value)?;
+        let frame = frame(id, Some(&encoded))?;
+        let location = self.append(&frame)?;
+        self.entries.insert(id.to_owned(), location);
+        Ok(())
     }
 
-    pub fn get(&self, _id: &str) -> Result<Option<Value>, StoreError> {
-        Ok(None)
+    /// Read and verify the stored frame, including checksum and codec.
+    pub fn get(&self, id: &str) -> Result<Option<Value>, StoreError> {
+        let Some(location) = self.entries.get(id) else { return Ok(None); };
+        let mut file = File::open(segment_path(&self.root, location.segment))?;
+        let size = file.metadata()?.len();
+        match read_frame(&mut file, location.offset, size)? {
+            FrameRead::Complete { id: stored_id, value: Some(value), .. } if stored_id == id => {
+                Ok(Some(value))
+            }
+            _ => Err(StoreError::Corrupt(format!(
+                "indexed record {id} could not be verified at segment {} offset {}",
+                location.segment, location.offset
+            ))),
+        }
     }
 
-    pub fn delete(&mut self, _id: &str) -> Result<bool, StoreError> {
-        Ok(false)
+    /// Write an append-only tombstone; returns false without writing if absent.
+    pub fn delete(&mut self, id: &str) -> Result<bool, StoreError> {
+        validate_id(id)?;
+        if !self.entries.contains_key(id) {
+            return Ok(false);
+        }
+        let frame = frame(id, None)?;
+        self.append(&frame)?;
+        self.entries.remove(id);
+        Ok(true)
     }
 
-    pub fn len(&self) -> usize {
-        0
+    pub fn len(&self) -> usize { self.entries.len() }
+
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    fn append(&mut self, frame: &[u8]) -> Result<Location, StoreError> {
+        if self.poisoned {
+            return Err(StoreError::Poisoned);
+        }
+        let result = self.try_append(frame);
+        if result.is_err() {
+            // A failed write or fsync has an uncertain outcome. Prevent further
+            // writes until the caller reopens the store and replays its log.
+            self.poisoned = true;
+        }
+        result
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    fn try_append(&mut self, frame: &[u8]) -> Result<Location, StoreError> {
+        let offset = self.active.metadata()?.len();
+        if offset > 0 && offset.saturating_add(frame.len() as u64) > self.segment_limit {
+            let next = self.active_id.checked_add(1).ok_or_else(|| {
+                StoreError::Corrupt("segment counter overflow".into())
+            })?;
+            if next > 99_999_999 {
+                return Err(StoreError::Corrupt("segment counter exhausted".into()));
+            }
+            let new_active = create_segment(&self.root, next)?;
+            self.active = new_active;
+            self.active_id = next;
+        }
+        let offset = self.active.metadata()?.len();
+        self.active.write_all(frame)?;
+        self.active.sync_data()?;
+        Ok(Location { segment: self.active_id, offset })
+    }
+}
+
+fn validate_id(id: &str) -> Result<(), StoreError> {
+    if id.is_empty() || id.len() > MAX_ID_BYTES {
+        Err(StoreError::InvalidId)
+    } else {
+        Ok(())
+    }
+}
+
+fn segment_path(root: &Path, segment_id: u64) -> PathBuf {
+    root.join(format!("segment-{segment_id:08}.rdb"))
+}
+
+fn parse_segment_name(name: &str) -> Option<u64> {
+    let number = name.strip_prefix("segment-")?.strip_suffix(".rdb")?;
+    if number.len() != 8 || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let id: u64 = number.parse().ok()?;
+    (id > 0).then_some(id)
+}
+
+fn create_segment(root: &Path, id: u64) -> Result<File, StoreError> {
+    let file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .append(true)
+        .open(segment_path(root, id))?;
+    file.sync_all()?;
+    sync_directory(root)?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn sync_directory(root: &Path) -> Result<(), StoreError> {
+    File::open(root)?.sync_all()?;
+    Ok(())
+}
+#[cfg(not(unix))]
+fn sync_directory(_root: &Path) -> Result<(), StoreError> {
+    // Portable Rust 1.85 has no directory fsync on Windows. The required
+    // Windows power-loss guarantees remain an explicit future acceptance gate.
+    Ok(())
+}
+
+fn frame(id: &str, encoded: Option<&[u8]>) -> Result<Vec<u8>, StoreError> {
+    validate_id(id)?;
+    let data = encoded.unwrap_or(&[]);
+    if data.len() > MAX_DOCUMENT_BYTES {
+        return Err(StoreError::Codec(CodecError::TooLarge));
+    }
+    let id_len = u32::try_from(id.len()).map_err(|_| StoreError::InvalidId)?;
+    let value_len = u32::try_from(data.len()).map_err(|_| StoreError::Codec(CodecError::TooLarge))?;
+    let mut output = Vec::with_capacity(HEADER_SIZE + id.len() + data.len());
+    output.extend_from_slice(MAGIC);
+    output.push(VERSION);
+    output.push(if encoded.is_some() { PUT } else { DELETE });
+    output.extend_from_slice(&[0, 0]);
+    output.extend_from_slice(&id_len.to_be_bytes());
+    output.extend_from_slice(&value_len.to_be_bytes());
+    output.extend_from_slice(&[0; 4]); // checksum at bytes 16..20
+    output.extend_from_slice(id.as_bytes());
+    output.extend_from_slice(data);
+    let checksum = crc32(&[&output[4..16], id.as_bytes(), data]);
+    output[16..20].copy_from_slice(&checksum.to_be_bytes());
+    Ok(output)
+}
+
+enum FrameRead {
+    Complete { id: String, value: Option<Value>, length: u64 },
+    Incomplete,
+}
+
+fn read_frame(file: &mut File, offset: u64, end: u64) -> Result<FrameRead, StoreError> {
+    let remaining = end.checked_sub(offset)
+        .ok_or_else(|| StoreError::Corrupt("frame offset exceeds segment size".into()))?;
+    if remaining < HEADER_SIZE as u64 {
+        return Ok(FrameRead::Incomplete);
+    }
+    file.seek(SeekFrom::Start(offset))?;
+    let mut header = [0u8; HEADER_SIZE];
+    file.read_exact(&mut header)?;
+    if &header[..4] != MAGIC {
+        return Err(StoreError::Corrupt(format!("invalid segment magic at {offset}")));
+    }
+    if header[4] != VERSION {
+        return Err(StoreError::Corrupt(format!("unsupported segment version at {offset}")));
+    }
+    let op = header[5];
+    if (op != PUT && op != DELETE) || header[6..8] != [0, 0] {
+        return Err(StoreError::Corrupt(format!("invalid operation or flags at {offset}")));
+    }
+    let id_len = u32::from_be_bytes(header[8..12].try_into().expect("fixed header")) as usize;
+    let value_len = u32::from_be_bytes(header[12..16].try_into().expect("fixed header")) as usize;
+    if !(1..=MAX_ID_BYTES).contains(&id_len)
+        || value_len > MAX_DOCUMENT_BYTES
+        || (op == DELETE && value_len != 0)
+        || (op == PUT && value_len < 5)
+    {
+        return Err(StoreError::Corrupt(format!("invalid frame lengths at {offset}")));
+    }
+    let length = (HEADER_SIZE as u64)
+        .checked_add(id_len as u64)
+        .and_then(|x| x.checked_add(value_len as u64))
+        .ok_or_else(|| StoreError::Corrupt("frame length overflow".into()))?;
+    if length > remaining {
+        return Ok(FrameRead::Incomplete);
+    }
+    let mut id_bytes = vec![0_u8; id_len];
+    let mut value_bytes = vec![0_u8; value_len];
+    file.read_exact(&mut id_bytes)?;
+    file.read_exact(&mut value_bytes)?;
+    let expected_crc = u32::from_be_bytes(header[16..20].try_into().expect("fixed header"));
+    let actual_crc = crc32(&[&header[4..16], &id_bytes, &value_bytes]);
+    if expected_crc != actual_crc {
+        return Err(StoreError::Corrupt(format!("checksum mismatch at {offset}")));
+    }
+    let id = String::from_utf8(id_bytes)
+        .map_err(|_| StoreError::Corrupt(format!("invalid UTF-8 document ID at {offset}")))?;
+    let value = if op == PUT {
+        Some(decode(&value_bytes).map_err(|err| {
+            StoreError::Corrupt(format!("invalid document at {offset}: {err}"))
+        })?)
+    } else {
+        None
+    };
+    Ok(FrameRead::Complete { id, value, length })
+}
+
+// CRC-32/ISO-HDLC (IEEE 802.3), including version, op, flags, lengths,
+// document ID and document payload; excludes magic and checksum field.
+const CRC32_TABLE: [u32; 256] = crc32_table();
+const fn crc32_table() -> [u32; 256] {
+    let mut table = [0_u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut value = i as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            value = if value & 1 != 0 { (value >> 1) ^ 0xedb8_8320 } else { value >> 1 };
+            bit += 1;
+        }
+        table[i] = value;
+        i += 1;
+    }
+    table
+}
+fn crc32(parts: &[&[u8]]) -> u32 {
+    let mut checksum = !0_u32;
+    for part in parts {
+        for &byte in *part {
+            let index = ((checksum ^ u32::from(byte)) & 0xff) as usize;
+            checksum = (checksum >> 8) ^ CRC32_TABLE[index];
+        }
+    }
+    !checksum
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crc32_standard_vector() {
+        assert_eq!(crc32(&[b"123456789"]), 0xcbf4_3926);
+    }
+
+    #[test]
+    fn validates_segment_filename() {
+        assert_eq!(parse_segment_name("segment-00000001.rdb"), Some(1));
+        assert_eq!(parse_segment_name("segment-99999999.rdb"), Some(99_999_999));
+        assert_eq!(parse_segment_name("segment-00000000.rdb"), None);
+        assert_eq!(parse_segment_name("segment-000001.rdb"), None);
+        assert_eq!(parse_segment_name("segment-00000001.rdb.bak"), None);
     }
 }
