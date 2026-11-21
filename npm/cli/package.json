@@ -1,6 +1,6 @@
 {
   "name": "rystemdb",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Native Rystem Database installer and launcher for npx",
   "type": "module",
   "license": "MIT",

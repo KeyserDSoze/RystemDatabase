@@ -1,6 +1,6 @@
 # Installation and distribution
 
-Install native release binaries only after verifying the version exists in [GitHub Releases](https://github.com/KeyserDSoze/RystemDatabase/releases). `v0.1.2` is health-only; the first document CRUD CLI preview is planned for `v0.1.2`. The npm/npx wrapper remains unavailable until actual npm registry publication.
+Install native release binaries only after verifying the version exists in [GitHub Releases](https://github.com/KeyserDSoze/RystemDatabase/releases). `v0.1.1` is health-only; `v0.1.2` is the first planned document CRUD CLI prerelease, pending actual release verification. The npm/npx wrapper remains unavailable until actual npm registry publication.
 
 ## Linux and macOS
 

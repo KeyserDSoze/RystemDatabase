@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "rystemdb-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rystemdb-core",
  "rystemdb-storage",
@@ -43,22 +43,22 @@ dependencies = [
 
 [[package]]
 name = "rystemdb-core"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rystemdb-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rystemdb-protocol",
 ]
 
 [[package]]
 name = "rystemdb-protocol"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "rystemdb-storage"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rystemdb-core",
 ]
