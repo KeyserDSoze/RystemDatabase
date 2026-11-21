@@ -19,3 +19,11 @@ test('TDD RED: bash latest lookup must include prereleases', () => {
 test('TDD RED: PowerShell latest lookup must include prereleases', () => {
   assert.match(file('scripts/install.ps1'), /releases\?per_page=1/);
 });
+
+test('TDD RED: Windows release smoke resets expected missing-get exit code', () => {
+  const workflow = file('.github/workflows/release.yml');
+  assert.match(workflow, /\$global:LASTEXITCODE = 0/,
+    'Expected negative GET must not leak its exit code to GitHub Actions');
+  assert.match(workflow, /needs\.prepare\.outputs\.publish == 'false'/,
+    'Published immutable assets must be retestable after a workflow-only fix');
+});
