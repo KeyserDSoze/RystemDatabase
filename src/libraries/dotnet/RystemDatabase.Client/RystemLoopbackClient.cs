@@ -2,6 +2,9 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Security;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 
 namespace RystemDatabase.Client;
 
@@ -20,7 +23,8 @@ public sealed class RystemRpcException : Exception
 
 /// <summary>
 /// A single, persistent, asynchronous localhost-only RSWP v1 TCP connection.
-/// Optional local-token HELLO is supported, but NO TLS: non-loopback rejected.
+/// Explicit CA+hostname verified TLS 1.3 or plaintext local developer mode;
+/// both reject all non-loopback targets.
 /// All requests share an I/O gate; this milestone is not yet a pooled or
 /// multiplexed production SDK. Failed/uncertain writes are never auto-retried.
 /// </summary>
@@ -29,15 +33,18 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
     private const int MaxPayload = RystemWireCodec.MaxPayloadBytes;
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(3);
     private readonly TcpClient _tcp;
-    private readonly NetworkStream _stream;
+    private readonly Stream _stream;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private ulong _nextId = 1;
     private bool _disposed;
 
     private RystemLoopbackClient(TcpClient tcp)
+        : this(tcp, tcp.GetStream()) { }
+
+    private RystemLoopbackClient(TcpClient tcp, Stream stream)
     {
         _tcp = tcp;
-        _stream = tcp.GetStream();
+        _stream = stream;
     }
 
     public static Task<RystemLoopbackClient> ConnectAsync(
@@ -74,22 +81,7 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         {
             await tcp.ConnectAsync(address, port, timeout.Token).ConfigureAwait(false);
             var client = new RystemLoopbackClient(tcp);
-            byte[] hello = [1, 0];
-            if (token is not null)
-            {
-                hello = new byte[36];
-                hello[0] = 1;
-                hello[1] = 0;
-                hello[2] = 0;
-                hello[3] = 32;
-                token.CopyTo(hello, 4);
-            }
-            var reply = await client.CallAsync(WireOperation.Hello, hello, cancellationToken)
-                .ConfigureAwait(false);
-            if (reply.Status != 0)
-                throw new RystemRpcException(reply.Status);
-            if (!reply.Payload.AsSpan().SequenceEqual(new byte[] { 1, 0 }))
-                throw new InvalidDataException("Rust server returned invalid RSWP 1.0 HELLO response");
+            await client.CompleteHelloAsync(token, cancellationToken).ConfigureAwait(false);
             return client;
         }
         catch
@@ -99,11 +91,95 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         }
     }
 
-    /// <summary>RED: verified TLS1.3 connection to the loopback Rust server.</summary>
-    public static Task<RystemLoopbackClient> ConnectTlsAsync(
+    /// <summary>
+    /// Connect to a localhost-only Rust TLS 1.3 listener. Uses the supplied
+    /// custom root CA and built-in SAN/hostname validation (NO bypass callback).
+    /// Never transmit the 32-byte bearer secret until the certificate chain,
+    /// hostname and negotiated TLS version have been verified.
+    /// This is not a remote/mTLS production SDK.
+    /// </summary>
+    public static async Task<RystemLoopbackClient> ConnectTlsAsync(
         IPAddress address, int port, string serverName, string trustedCaFile, byte[] token,
         CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("TLS1.3 client not implemented");
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        if (!IPAddress.IsLoopback(address))
+            throw new ArgumentException("Rystem TLS SDK requires numeric loopback address", nameof(address));
+        if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
+        if (string.IsNullOrWhiteSpace(serverName))
+            throw new ArgumentException("Expected a nonempty TLS certificate DNS name", nameof(serverName));
+        if (string.IsNullOrWhiteSpace(trustedCaFile))
+            throw new ArgumentException("Expected explicit trusted root PEM path", nameof(trustedCaFile));
+        ArgumentNullException.ThrowIfNull(token);
+        if (token.Length != 32)
+            throw new ArgumentException("RSWP TLS bearer token must be exactly 32 bytes", nameof(token));
+        // Reject huge malformed CA PEMs before any network connection. This
+        // trust root is explicit, not taken from global OS certificate stores.
+        if (new FileInfo(trustedCaFile).Length is <= 0 or > 65536)
+            throw new ArgumentException("Invalid TLS root CA PEM length", nameof(trustedCaFile));
+
+        var secret = token.ToArray();
+        using var ca = X509Certificate2.CreateFromPemFile(trustedCaFile);
+        var chainPolicy = new X509ChainPolicy
+        {
+            TrustMode = X509ChainTrustMode.CustomRootTrust,
+            RevocationMode = X509RevocationMode.NoCheck, // no test CA CRL; rotation remains #39
+            CustomTrustStore = { ca }
+        };
+        var options = new SslClientAuthenticationOptions
+        {
+            TargetHost = serverName,
+            EnabledSslProtocols = SslProtocols.Tls13,
+            CertificateChainPolicy = chainPolicy,
+            AllowRenegotiation = false
+        };
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(DefaultTimeout);
+        var tcp = new TcpClient(address.AddressFamily) { NoDelay = true };
+        SslStream? tls = null;
+        try
+        {
+            await tcp.ConnectAsync(address, port, deadline.Token).ConfigureAwait(false);
+            tls = new SslStream(tcp.GetStream(), leaveInnerStreamOpen: false);
+            // No RemoteCertificateValidationCallback: native SslStream must
+            // enforce both strict DNS SAN and the custom trust root policy.
+            await tls.AuthenticateAsClientAsync(options, deadline.Token).ConfigureAwait(false);
+            if (tls.SslProtocol != SslProtocols.Tls13 || !tls.IsAuthenticated || !tls.IsEncrypted)
+                throw new AuthenticationException("RSWP requires authenticated TLS 1.3");
+            var client = new RystemLoopbackClient(tcp, tls);
+            await client.CompleteHelloAsync(secret, cancellationToken).ConfigureAwait(false);
+            return client;
+        }
+        catch
+        {
+            if (tls is not null) await tls.DisposeAsync().ConfigureAwait(false);
+            tcp.Dispose();
+            throw;
+        }
+        finally
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret);
+        }
+    }
+
+    private async Task CompleteHelloAsync(byte[]? token, CancellationToken cancellationToken)
+    {
+        byte[] hello = [1, 0];
+        if (token is not null)
+        {
+            hello = new byte[36];
+            hello[0] = 1;
+            hello[1] = 0;
+            hello[2] = 0;
+            hello[3] = 32;
+            token.CopyTo(hello, 4);
+        }
+        var reply = await CallAsync(WireOperation.Hello, hello, cancellationToken)
+            .ConfigureAwait(false);
+        if (reply.Status != 0) throw new RystemRpcException(reply.Status);
+        if (!reply.Payload.AsSpan().SequenceEqual(new byte[] { 1, 0 }))
+            throw new InvalidDataException("Rust server returned invalid RSWP 1.0 HELLO response");
+    }
 
     public async Task PingAsync(CancellationToken cancellationToken = default)
     {
@@ -201,6 +277,7 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
             // After a partial TCP write or read, the outcome may be unknown.
             // Close the connection; never silently replay a write or reuse
             // a potentially desynchronized frame stream.
+            _stream.Dispose();
             _tcp.Dispose();
             throw;
         }
