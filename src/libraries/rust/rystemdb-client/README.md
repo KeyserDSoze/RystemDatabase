@@ -28,3 +28,7 @@ Tests: `cargo test -p rystemdb-client --locked` for key vectors and refusal of r
 Only the `v0.1.2` *local document CLI* is released. `rpc-serve`/Rust `LocalClient` on main are not yet packaged in published release artifacts.
 
 Protocol details: [docs/RPC_SERVER.md](../../../../docs/RPC_SERVER.md), [docs/WIRE_PROTOCOL.md](../../../../docs/WIRE_PROTOCOL.md).
+
+## Shared binary key protocol
+
+The Rust client uses `rystemdb-protocol::crud::encode_key` for requests (the native server uses the matching borrowed decoder). There are no duplicated collection/ID validators in the server and client. See [CRUD_KEY_PROTOCOL.md](../../../../docs/CRUD_KEY_PROTOCOL.md). This is still a localhost-only synchronous client.

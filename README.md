@@ -53,7 +53,7 @@ See [storage format, crash-recovery tests and limits](docs/STORAGE.md). Feature-
 
 The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP v1 frame codecs with TDD conformance tests; **a localhost-only native RPC server and an experimental synchronous Rust `LocalClient` exist on `main`, but there is no secure remote client connection or functioning EF Core provider yet**.
 
-- [RSWP v1 binary protocol](docs/WIRE_PROTOCOL.md): 24-byte versioned envelope, 64-bit correlation ID and bounded payload. [Local TCP RPC prototype](docs/RPC_SERVER.md) on main (not in v0.1.2) uses binary document CRUD over loopback only.
+- [RSWP v1 binary protocol](docs/WIRE_PROTOCOL.md) and [cross-language CRUD key codec](docs/CRUD_KEY_PROTOCOL.md): 24-byte versioned envelope, 64-bit correlation ID, bounded payload and exact Rust/.NET/TypeScript key vectors. [Local TCP RPC prototype](docs/RPC_SERVER.md) on main (not in v0.1.2) uses binary document CRUD over loopback only.
 - [Distributed design](docs/DISTRIBUTED_ARCHITECTURE.md): shard routing/epochs, replicated WAL/quorum, regional asynchronous replication and failover proposals; **not implemented**.
 - [Issues #23–#35](https://github.com/KeyserDSoze/RystemDatabase/issues/23): actual feature backlog for server, clients, EF, sharding, geo, adaptive indexing, sparse storage and analytical Arrow Flight SQL.
 

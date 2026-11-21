@@ -50,6 +50,10 @@ Response:
 
 Error frames never include file paths, segment contents or exception messages. There is no idempotency guarantee: on a write-time disconnect, clients must assume the outcome is **uncertain**, not blindly retry a non-idempotent mutation.
 
+## Shared CRUD key prefix across Rust, C# and TypeScript
+
+The byte-exact key-prefix contract is now implemented in a **shared Rust `rystemdb-protocol::crud` module**, reused by server/client, and in independent .NET/TypeScript libraries. See [CRUD_KEY_PROTOCOL.md](CRUD_KEY_PROTOCOL.md) for exact golden bytes, Unicode handling, truncation and length guards. Only the key portion is interoperable across three languages so far; nested typed documents still need independent RDB v1 implementations (#43).
+
 ## Experimental Rust client connection
 
 The Rust workspace package `src/libraries/rust/rystemdb-client` now exports `LocalClient`, a **synchronous**, nonpooled TCP client. It automatically exchanges a HELLO frame and sends native binary documents. Its `connect` method refuses non-loopback addresses before opening a socket. This SDK is source-only on `main` until published and must not be represented as a remote secure client.

@@ -13,3 +13,7 @@ dotnet run --project ../RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.
 ```
 
 The EF Core integration is a separate project (#29), not part of this wire codec.
+
+## Binary CRUD key codec (source only)
+
+`RystemCrudKey.Encode/Decode` implements the RSWP v1 BE length-prefixed collection/UTF-8 ID and preserves any opaque RDB binary suffix. Independent .NET conformance tests assert Rust/TypeScript golden bytes and reject invalid UTF-8, truncated names, controls and excessive key sizes. This **does not** decode typed RDB values or implement a network connection; see #43 and #27.

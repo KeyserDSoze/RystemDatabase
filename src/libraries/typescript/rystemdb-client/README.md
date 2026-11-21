@@ -9,3 +9,7 @@ npm test
 ```
 
 **Not implemented:** an operational TCP/TLS database client, session pooling, cancellation, typed CRUD, cluster routing, browser support or published npm SDK. This SDK is independent of the `npm/cli` launcher package. Do not advertise it as a working remote client before server #25 and end-to-end tests.
+
+## Binary CRUD key codec (source only)
+
+`encodeCrudKey/decodeCrudKey` in `src/crud.ts` use strict UTF-8 and exact big-endian lengths, reject malformed/truncated data and isolated UTF-16 surrogates, and preserve opaque RDB PUT bytes. `npm test` exercises the same golden vectors as Rust and C#. **No typed RDB decoder or TCP/TLS connection yet** (#43 / #28).
