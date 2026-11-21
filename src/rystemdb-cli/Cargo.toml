@@ -1,6 +1,6 @@
 [package]
 name = "rystemdb-cli"
-description = "Rystem Database native document CLI and experimental health-only network server"
+description = "Rystem Database native document CLI and experimental loopback-only binary RPC server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

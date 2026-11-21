@@ -12,13 +12,13 @@ cargo run --locked -p rystemdb-cli -- rpc-serve \
 
 `--listen` defaults to `127.0.0.1:8790`. Any non-loopback address (including `0.0.0.0`, `::`, and all external IPv4/IPv6 addresses) is **rejected before opening/creating the database**. The existing `rystemdb serve` command is still the separate HTTP health-only endpoint; it does **not** serve documents.
 
-**WARNING: no TLS or authentication. Use only on trusted localhost for development.** Do not tunnel or port-forward it to external networks. TLS, authentication and authorization are mandatory before external access; tracked in [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+**WARNING: no TLS or secure remote authentication.** An **optional local-only token/collection ACL** is available with `--auth-file`, but the token travels as plaintext over loopback. Use only on trusted localhost and do not tunnel/port-forward externally. Production TLS1.3 identity/authentication/authorization remains tracked in [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 ## Wire frame
 
 Each request/response is an [RSWP v1 frame](WIRE_PROTOCOL.md): 24-byte fixed big-endian header followed by at most 16 MiB opaque bytes. Keep-alive can send consecutive frames. The server always responds using the incoming operation and 64-bit request ID.
 
-Before anything else, the client sends `HELLO` (operation=1) with exactly two bytes `01 00`, meaning protocol v1.0. The successful response returns the same two bytes. A call made before HELLO, or invalid HELLO body, receives status `2` and then the connection closes. Invalid wire header/version/oversized body terminates the connection without interpreting that payload.
+Before anything else, the client sends `HELLO` (operation=1): legacy anonymous localhost payload `01 00`, or when `--auth-file` is enabled, `01 00 00 20` plus a **32-byte raw token**. Success responds `01 00`. A request before HELLO receives status `2` and closes; wrong/missing credentials in authenticated mode receive status `6` and close. Invalid wire version/oversized frames terminate the connection. [Auth-file policy, startup checks and per-collection ACL semantics](LOCAL_AUTH.md).
 
 `PING` (operation=2) accepts **empty** payload and returns an empty success payload. The prototype does not yet negotiate API capabilities, authentication, schema version or topology.
 
@@ -46,7 +46,7 @@ Response:
 - PUT success: status `0`, empty payload (after storage sync succeeds).
 - GET success: status `0`, payload is one complete typed `RDB\0` binary value; missing key status `1` and empty payload.
 - DELETE success: status `0`, empty payload; missing key status `1` and empty payload.
-- Bad request: status `2`, empty payload; storage/internal error: status `4`, empty payload.
+- Bad request: status `2`, empty payload; unauthorized token/collection operation: status `6`, empty payload; storage/internal error: status `4`, empty payload.
 
 Error frames never include file paths, segment contents or exception messages. There is no idempotency guarantee: on a write-time disconnect, clients must assume the outcome is **uncertain**, not blindly retry a non-idempotent mutation.
 

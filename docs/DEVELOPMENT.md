@@ -83,3 +83,13 @@ These spawn a real native `rpc-serve --listen 127.0.0.1:0` subprocess, test type
 ## Live .NET and Node RPC cross-OS CI gate (#48)
 
 The [CI workflow](../.github/workflows/ci.yml) now runs the .NET 10 and Node.js 22 client suites **separately on ubuntu-latest, macos-latest, windows-latest**. Each builds the real Rust `rystemdb` binary, launches it with `--listen 127.0.0.1:0` from the client test process, verifies actual HELLO/PING/typed CRUD, competing writer exclusion and restart replay, then cleans up. Windows runners use the native `.exe`. The native installer/package release remains independent and is not a released RPC SDK.
+
+## Optional local-only authentication and collection ACL TDD (#49/#50)
+
+```sh
+cargo test -p rystemdb-cli --locked --test rpc_auth
+cargo test -p rystemdb-cli --locked --test rpc_auth_sdk
+# CI also runs actual authenticated Rust-server interop in .NET 10 and Node 22 on all 3 OS.
+```
+
+Use [LOCAL_AUTH.md](LOCAL_AUTH.md) for strict private-file policies, HELLO token payload, ACL semantics and limitations. This is an **experimental plaintext localhost mode**, not TLS: no external binding or remotely safe authentication is available.

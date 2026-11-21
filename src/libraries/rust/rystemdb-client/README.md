@@ -23,7 +23,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 Tests: `cargo test -p rystemdb-client --locked` for key vectors and refusal of remote IPs, and `cargo test -p rystemdb-cli --test rpc_rust_sdk --locked` for separate real server subprocess interoperability across Linux/macOS/Windows.
 
-**Limits**: no TLS, credentials, authorization, async pool, routing, cancellation, server discovery or reliable automatic retries. Any write-time timeout has an uncertain outcome and must be reconciled. This is a localhost-only developer experiment; no working .NET or TypeScript client connections yet.
+**Limits**: optional local-only `LocalClient::connect_with_token(addr, &token)` supports a 32-byte HELLO bearer token and server-side collection ACLs; this is **not TLS, secure remote authentication, or a production credential lifecycle**. No async pool, routing, cancellation, discovery or reliable automatic retries. Write-time failure has an uncertain outcome. .NET and TypeScript also have working localhost-only clients, tested across Linux/macOS/Windows.
 
 Only the `v0.1.2` *local document CLI* is released. `rpc-serve`/Rust `LocalClient` on main are not yet packaged in published release artifacts.
 
@@ -32,3 +32,7 @@ Protocol details: [docs/RPC_SERVER.md](../../../../docs/RPC_SERVER.md), [docs/WI
 ## Shared binary key protocol
 
 The Rust client uses `rystemdb-protocol::crud::encode_key` for requests (the native server uses the matching borrowed decoder). There are no duplicated collection/ID validators in the server and client. See [CRUD_KEY_PROTOCOL.md](../../../../docs/CRUD_KEY_PROTOCOL.md). This is still a localhost-only synchronous client.
+
+## Opt-in local authentication
+
+`LocalClient::connect_with_token(addr, &token)` sends the documented 36-byte authenticated HELLO. Read the raw `[u8; 32]` from a private client credential file, never put tokens in argv or logs. Wrong tokens and forbidden collection operations return `ClientError::Rejected(6)`. The server must be started with `--auth-file`. See [LOCAL_AUTH.md](../../../../docs/LOCAL_AUTH.md). **No TLS, rotation or remote access.**

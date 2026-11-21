@@ -1,4 +1,4 @@
-//! Native Rystem Database CLI. The network endpoint remains health-only.
+//! Native Rystem Database CLI: HTTP health, local document CRUD and loopback RSWP RPC.
 mod auth;
 mod json_codec;
 mod rpc;
@@ -24,9 +24,9 @@ Usage:\n\
   rystemdb --help\n\
 PUT accepts JSON from stdin (--json -) or a local file (--json FILE).\n\
 --typed-json explicitly interprets $rystem tagged references/bytes.\n\
-The CLI persists binary documents; the network server exposes only health endpoints.\n\
+The CLI persists binary documents; HTTP serve exposes health only; rpc-serve has local binary CRUD.\n\
 RPC is experimental localhost-only; --auth-file enables private-token collection ACLs. No TLS.\n\
-No SQL, TLS/auth, distributed RPC, or multi-document transactions yet.\n"
+No SQL, TLS 1.3, secure remote authentication, distributed RPC, or multi-document transactions yet.\n"
 }
 
 fn response_for(request: &[u8]) -> &'static [u8] {

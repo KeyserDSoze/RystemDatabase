@@ -9,7 +9,7 @@ Four project directories, all developed directly on `main`:
 | TypeScript | `typescript/rystemdb-client` | Async `RystemLocalClient`: live native TCP with concurrent correlated requests, typed CRUD and real Rust subprocess tests; localhost only | #28/#46 |
 | EF Core | `dotnet/RystemDatabase.EntityFrameworkCore` | Buildable .NET project scaffold only, **not an EF Core provider** | #29 |
 
-The separate `src/rystemdb-protocol` crate is the binary wire frame reference (#24); an experimental loopback-only server is now being implemented under #37, but TLS/auth (#39), **working client SDK connections** and shared interoperable CRUD payload schemas (#38) remain open work.
+The `src/rystemdb-protocol` crate is the binary frame reference (#24); the localhost server and all three SDK clients now exchange real typed CRUD. They also support **opt-in local-token HELLO** and explicit collection read/write ACLs (#49/#50). **Remote TLS/mTLS, audited security and SDK publishing are not implemented** (#39).
 
 Conformance source/tests:
 - Rust: `src/rystemdb-protocol/tests/wire_contract.rs`
@@ -22,3 +22,5 @@ See [wire protocol](../../docs/WIRE_PROTOCOL.md), [ADR 0006](../../adr/0006-bina
 
 
 [Local SDK usage and real-process tests](../../docs/LOCAL_CLIENTS.md). All implementations are experimental, source-only and intentionally restricted to numeric localhost addresses without TLS/auth.
+
+The optional authenticated loopback mode is documented in [LOCAL_AUTH.md](../../docs/LOCAL_AUTH.md). The legacy anonymous localhost mode remains available for backward compatibility; **neither mode is an authenticated TLS remote service**.

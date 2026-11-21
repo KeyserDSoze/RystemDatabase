@@ -2,7 +2,7 @@
 
 This page describes the **source-only localhost TCP client milestone**, developed directly on main under [#45](https://github.com/KeyserDSoze/RystemDatabase/issues/45), [#46](https://github.com/KeyserDSoze/RystemDatabase/issues/46), and parent [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27)/[#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28).
 
-**Security warning:** the Rust RSWP RPC server does **not implement TLS, authentication, authorization, or public network policy**. It will only bind numeric loopback. All three SDKs reject non-loopback connection targets. Do not use port-forwarding or public reverse proxies to bypass that restriction. A production remote client requires [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+**Security warning:** the Rust RSWP RPC server does **not implement TLS, secure remote authentication, or public network policy**. An **optional local-only bearer-token HELLO plus collection ACL** is now available ([LOCAL_AUTH.md](LOCAL_AUTH.md)), but tokens are sent as plaintext over loopback. It will only bind numeric loopback. All three SDKs reject non-loopback connection targets. Do not use port-forwarding or public reverse proxies to bypass that restriction. A production remote client requires [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 **Release warning:** the current published native release `v0.1.2` predates this RPC server and these SDK connection implementations. Build `rystemdb` from main to run this example. None of the .NET/TypeScript client packages is published to NuGet/npm at this point; npm/cli is an independent native-binary launcher.
 
@@ -87,3 +87,7 @@ See [RSWP framing](WIRE_PROTOCOL.md), [CRUD key spec](CRUD_KEY_PROTOCOL.md), [na
 ### CI and distribution boundaries
 
 [CI workflow](../.github/workflows/ci.yml) has separate `ubuntu-latest`, `macos-latest`, and `windows-latest` matrices for **Node 22** and **.NET 10**. All test real binary CRUD and cross-process writer locking with the executable built locally on the runner. [Issue #48](https://github.com/KeyserDSoze/RystemDatabase/issues/48) tracks this specific acceptance gate; [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27) and [#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28) still track actual NuGet/npm SDK packaging and authenticated remote connectivity. Existing published `v0.1.2` contains no new RPC server; no SDK package was released by these CI changes.
+
+## Authenticated localhost mode (source-only, opt-in)
+
+`rystemdb rpc-serve --auth-file ./private/acl.txt` requires a private-file 32-byte token with explicit `r`, `w` or `rw` permissions per collection; it denies anonymous HELLO and unauthorized operations with status `6`. The Rust, .NET and Node SDKs now expose `LocalClient::connect_with_token(addr, &token)`, `RystemLoopbackClient.ConnectWithTokenAsync(IPAddress.Loopback, port, token)` and `RystemLocalClient.connect("127.0.0.1", port, token)`. The token is **raw bytes**, not its hex representation. See the [exact file format, generation and code examples](LOCAL_AUTH.md), and TDD #49/#50. This is **not TLS**, cannot be bound externally and is not a substitute for #39.

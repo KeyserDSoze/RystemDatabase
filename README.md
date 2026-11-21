@@ -51,10 +51,10 @@ See [storage format, crash-recovery tests and limits](docs/STORAGE.md). Feature-
 
 ## Client libraries and distributed architecture (experimental)
 
-The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP framing, CRUD key-prefix and native RDB typed value codecs with TDD conformance tests; **a localhost-only native RPC server, a synchronous Rust `LocalClient`, and **asynchronous .NET/Node.js localhost TCP clients tested against real Rust processes on Linux, macOS and Windows** exist on `main`; there is still no secure remote access, connection pool or functioning EF Core provider**.
+The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP framing, CRUD key-prefix and native RDB typed value codecs with TDD conformance tests. A **localhost-only native RPC server** and real Rust, .NET and Node clients work across Linux/macOS/Windows. **Optional local-token HELLO and per-collection ACLs** now exist in source, but there is **no TLS, secure remote access, production connection pool or working EF Core provider**.
 
 - [RSWP v1 binary protocol](docs/WIRE_PROTOCOL.md), [cross-language CRUD key codec](docs/CRUD_KEY_PROTOCOL.md) and [typed RDB v1 value codec](docs/RDB_TYPED_PROTOCOL.md): 24-byte versioned envelope, 64-bit correlation ID, bounded payload and exact Rust/.NET/TypeScript key vectors. [Local TCP RPC prototype](docs/RPC_SERVER.md) on main (not in v0.1.2) uses binary document CRUD over loopback only.
-- [Working localhost-only Rust/.NET/TypeScript SDK connections (source preview)](docs/LOCAL_CLIENTS.md): real binary RPC across languages, not yet authenticated or released.
+- [Working localhost-only Rust/.NET/TypeScript SDK connections (source preview)](docs/LOCAL_CLIENTS.md): real binary RPC across languages with [optional localhost-only credential ACLs](docs/LOCAL_AUTH.md); NOT TLS-secured or released.
 - [Distributed design](docs/DISTRIBUTED_ARCHITECTURE.md): shard routing/epochs, replicated WAL/quorum, regional asynchronous replication and failover proposals; **not implemented**.
 - [Issues #23–#35](https://github.com/KeyserDSoze/RystemDatabase/issues/23): actual feature backlog for server, clients, EF, sharding, geo, adaptive indexing, sparse storage and analytical Arrow Flight SQL.
 

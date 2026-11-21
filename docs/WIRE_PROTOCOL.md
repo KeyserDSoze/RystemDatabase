@@ -2,7 +2,7 @@
 
 Source of truth: [Issue #24](https://github.com/KeyserDSoze/RystemDatabase/issues/24), `src/rystemdb-protocol`. A versioned, **binary frame** carries the request/response metadata and an opaque binary payload. It is conceptually similar to JSON-RPC (method + request ID + response status), but JSON is **not used** for the frame envelope or its planned document payload.
 
-**Status:** the frame codecs are tested in Rust, C#/.NET and TypeScript, and an experimental **loopback-only** Rust TCP server now implements a provisional binary document CRUD body. This is **not** an authenticated remote server or cross-language CRUD client; there is no TLS, authz or distributed routing. No version with the RPC server has been released yet.
+**Status:** RSWP frames, CRUD key prefixes and typed RDB document bodies have independent Rust/.NET/TypeScript byte-conformance tests, and all three SDKs now connect to an experimental **loopback-only** Rust TCP server across Linux/macOS/Windows. A **local-only, opt-in authenticated HELLO with collection ACLs** exists ([LOCAL_AUTH.md](LOCAL_AUTH.md)), but this is **not TLS or remotely secure**. No SDK or native RPC release has been published.
 
 ## Exact header v1
 
@@ -36,9 +36,13 @@ Rust, C# and TypeScript independent conformance tests assert these octets. All i
 
 ## Provisional document payload v1 (local server on main)
 
-A **working local-only** Rust server uses binary HELLO/PING and PUT/GET/DELETE: [exact body layout, statuses and safety limits](RPC_SERVER.md). Request key: `u16 collection_len BE` + ASCII collection + `u16 id_len BE` + UTF-8 ID, plus one `RDB\\0` typed document payload for PUT. GET responds with binary `RDB\\0` value, never JSON. The CRUD key-prefix schema now has a **shared Rust decoder** and independent .NET/TypeScript golden vectors ([CRUD_KEY_PROTOCOL.md](CRUD_KEY_PROTOCOL.md), #42). The complete **typed RDB binary document suffix** and live cross-language database connections remain experimental/unimplemented (#38, #43, #27–28); frame conformance and key-prefix compatibility alone do not establish full client interoperability.
+A **working local-only** Rust server uses binary HELLO/PING and PUT/GET/DELETE: [exact body layout, statuses and safety limits](RPC_SERVER.md). Request key: `u16 collection_len BE` + ASCII collection + `u16 id_len BE` + UTF-8 ID, plus one `RDB\\0` typed document payload for PUT. GET responds with binary `RDB\\0` value, never JSON. The CRUD key-prefix schema now has a **shared Rust decoder** and independent .NET/TypeScript golden vectors ([CRUD_KEY_PROTOCOL.md](CRUD_KEY_PROTOCOL.md), #42). The complete **typed RDB binary document suffix** and live Rust/.NET/TypeScript localhost client connections now have end-to-end test coverage, including [optional local-token HELLO and collection-specific authorization](LOCAL_AUTH.md). Stable negotiation, authenticated TLS remote transport, streaming and published SDK compatibility remain open (#38, #39, #43).
 
 Long queries and data streams need bounded multi-frame chunking, cancellation, deadlines, flow control and pagination; large analytics results are better served as Arrow IPC/Flight SQL when DataFusion is implemented. Client request ID correlation and server response status are already represented by the v1 header, but idempotency tokens and topology/shard epochs are a later negotiated schema.
+
+## Optional local-only authenticated HELLO
+
+By default (legacy localhost development), HELLO request payload is `01 00`. When the Rust server starts with `--auth-file`, HELLO must instead contain `01 00 00 20` followed by exactly **32 raw bearer-token bytes**. Successful HELLO responds with `01 00`. Missing/incorrect credentials receive status `6` and the connection closes; authenticated sessions receive per-collection `r`/ `w` grants, and unauthorized GET/PUT/DELETE return status `6` without accessing the store. This is **plaintext localhost**, not TLS or secure remote authentication; full security and Windows ACL gates remain open (#39). See [LOCAL_AUTH.md](LOCAL_AUTH.md).
 
 ## Transport, safety and performance
 
