@@ -20,7 +20,7 @@ public sealed class RystemRpcException : Exception
 
 /// <summary>
 /// A single, persistent, asynchronous localhost-only RSWP v1 TCP connection.
-/// No TLS/auth is present: non-loopback addresses are rejected before connect.
+/// Optional local-token HELLO is supported, but NO TLS: non-loopback rejected.
 /// All requests share an I/O gate; this milestone is not yet a pooled or
 /// multiplexed production SDK. Failed/uncertain writes are never auto-retried.
 /// </summary>
@@ -40,8 +40,27 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         _stream = tcp.GetStream();
     }
 
-    public static async Task<RystemLoopbackClient> ConnectAsync(
+    public static Task<RystemLoopbackClient> ConnectAsync(
         IPAddress address, int port, CancellationToken cancellationToken = default)
+        => ConnectInternalAsync(address, port, null, cancellationToken);
+
+    /// <summary>
+    /// Authenticated HELLO over localhost only; accepts a raw 32-byte secret.
+    /// It is a developer-mode credential, NOT encrypted TLS authentication.
+    /// Do not log the token or pass it via command line arguments.
+    /// </summary>
+    public static Task<RystemLoopbackClient> ConnectWithTokenAsync(
+        IPAddress address, int port, byte[] token, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        if (token.Length != 32)
+            throw new ArgumentException("RSWP local token must be 32 bytes", nameof(token));
+        // Defensively copy before any asynchronous socket operation.
+        return ConnectInternalAsync(address, port, token.ToArray(), cancellationToken);
+    }
+
+    private static async Task<RystemLoopbackClient> ConnectInternalAsync(
+        IPAddress address, int port, byte[]? token, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(address);
         if (!IPAddress.IsLoopback(address))
@@ -55,10 +74,22 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         {
             await tcp.ConnectAsync(address, port, timeout.Token).ConfigureAwait(false);
             var client = new RystemLoopbackClient(tcp);
-            var hello = await client.CallAsync(WireOperation.Hello, [1, 0], cancellationToken)
+            byte[] hello = [1, 0];
+            if (token is not null)
+            {
+                hello = new byte[36];
+                hello[0] = 1;
+                hello[1] = 0;
+                hello[2] = 0;
+                hello[3] = 32;
+                token.CopyTo(hello, 4);
+            }
+            var reply = await client.CallAsync(WireOperation.Hello, hello, cancellationToken)
                 .ConfigureAwait(false);
-            if (hello.Status != 0 || !hello.Payload.AsSpan().SequenceEqual(new byte[] { 1, 0 }))
-                throw new InvalidDataException("Rust server rejected RSWP v1 HELLO");
+            if (reply.Status != 0)
+                throw new RystemRpcException(reply.Status);
+            if (!reply.Payload.AsSpan().SequenceEqual(new byte[] { 1, 0 }))
+                throw new InvalidDataException("Rust server returned invalid RSWP 1.0 HELLO response");
             return client;
         }
         catch
@@ -67,11 +98,6 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
             throw;
         }
     }
-
-    /// <summary>RED: opt-in 32-byte local-token HELLO, not yet implemented.</summary>
-    public static Task<RystemLoopbackClient> ConnectWithTokenAsync(
-        IPAddress address, int port, byte[] token, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("authenticated HELLO not implemented");
 
     public async Task PingAsync(CancellationToken cancellationToken = default)
     {

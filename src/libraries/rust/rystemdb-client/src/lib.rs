@@ -3,7 +3,7 @@
 //! Native RSWP v1 HELLO/PING/PUT/GET/DELETE over persistent TCP. No JSON,
 //! and no dependency on the CLI process once connected.
 //!
-//! Security: NO TLS/auth. External addresses are rejected before attempting a
+//! Security: optional local-only token HELLO; NO TLS. External IPs rejected before
 //! TCP connection. This is a TDD proof-of-concept, not the future async SDK.
 pub use rystemdb_protocol::{
     decode, encode, read_frame, write_frame, Frame, Kind, Operation, ProtocolError,
@@ -74,6 +74,16 @@ pub struct LocalClient {
 impl LocalClient {
     /// Connect only to numeric 127.0.0.1/::1, then negotiate RSWP 1.0.
     pub fn connect(addr: SocketAddr) -> Result<Self, ClientError> {
+        Self::connect_inner(addr, None)
+    }
+
+    /// Authenticate a local RSWP 1.0 session with one 32-byte raw secret.
+    /// The token is never placed on argv or logged. This is **not TLS**.
+    pub fn connect_with_token(addr: SocketAddr, token: &[u8; 32]) -> Result<Self, ClientError> {
+        Self::connect_inner(addr, Some(token))
+    }
+
+    fn connect_inner(addr: SocketAddr, token: Option<&[u8; 32]>) -> Result<Self, ClientError> {
         if !addr.ip().is_loopback() {
             return Err(ClientError::RemoteForbidden);
         }
@@ -82,16 +92,19 @@ impl LocalClient {
         stream.set_write_timeout(Some(TIMEOUT))?;
         stream.set_nodelay(true)?;
         let mut client = Self { stream, request_id: 1 };
-        let frame = client.call(Operation::Hello, vec![1, 0])?;
-        if frame.status != 0 || frame.payload != [1, 0] {
+        let mut hello = vec![1, 0];
+        if let Some(secret) = token {
+            hello.extend_from_slice(&[0, 32]);
+            hello.extend_from_slice(secret);
+        }
+        let frame = client.call(Operation::Hello, hello)?;
+        if frame.status != 0 {
+            return Err(ClientError::Rejected(frame.status));
+        }
+        if frame.payload != [1, 0] {
             return Err(ClientError::ResponseMismatch);
         }
         Ok(client)
-    }
-
-    /// RED: authenticated loopback connection, intentionally unimplemented.
-    pub fn connect_with_token(_addr: SocketAddr, _token: &[u8; 32]) -> Result<Self, ClientError> {
-        Err(ClientError::ResponseMismatch)
     }
 
     /// Verify the open connection is still responsive; use the same socket.

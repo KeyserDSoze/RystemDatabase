@@ -1,5 +1,6 @@
 /**
- * Experimental localhost-only RSWP v1 TCP client. No TLS/authentication.
+ * Experimental localhost-only RSWP v1 TCP client; optional local token,
+ * but still NO TLS or remote authenticated transport.
  * Concurrent requests are correlated by u64 ID on one persistent socket.
  * Incomplete, invalid or timed-out connections fail closed; writes are not
  * automatically retried because the server-side outcome may be uncertain.
@@ -48,12 +49,16 @@ export class RystemLocalClient {
     socket.on("close", () => this.failAll(new Error("Rystem RPC connection closed")));
   }
 
-  static async connect(host: string, port: number): Promise<RystemLocalClient> {
+  static async connect(host: string, port: number, token?: Uint8Array): Promise<RystemLocalClient> {
     if (host !== "127.0.0.1" && host !== "::1") {
       throw new Error("Only numeric loopback addresses are allowed without TLS/auth");
     }
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new Error("Invalid Rystem RPC port");
+    }
+    if (token !== undefined &&
+        (!(token instanceof Uint8Array) || token.length !== 32)) {
+      throw new Error("Rystem local token must be exactly 32 raw bytes");
     }
     const socket = new Socket();
     const client = new RystemLocalClient(socket);
@@ -71,10 +76,13 @@ export class RystemLocalClient {
         socket.once("connect", onConnect);
         socket.connect(port, host);
       });
-      const hello = await client.request(1, Uint8Array.from([1, 0]));
-      if (hello.status !== 0 || hello.payload.length !== 2 ||
+      const handshake = token === undefined ? Uint8Array.from([1, 0]) :
+        Uint8Array.from([1, 0, 0, 32, ...token]);
+      const hello = await client.request(1, handshake);
+      if (hello.status !== 0) throw new RystemRpcError(hello.status);
+      if (hello.payload.length !== 2 ||
           hello.payload[0] !== 1 || hello.payload[1] !== 0) {
-        throw new Error("Rystem server rejected RSWP v1 HELLO handshake");
+        throw new Error("Rystem server returned malformed RSWP v1 HELLO response");
       }
       return client;
     } catch (error) {
