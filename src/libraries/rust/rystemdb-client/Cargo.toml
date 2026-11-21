@@ -13,3 +13,5 @@ path = "src/lib.rs"
 [dependencies]
 rystemdb-protocol = { path = "../../../rystemdb-protocol" }
 rystemdb-core = { path = "../../../rystemdb-core" }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
+rustls-pemfile = "=2.2.0"

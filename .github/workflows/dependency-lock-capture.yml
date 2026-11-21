@@ -1,0 +1,15 @@
+name: Temporary Cargo lockfile capture
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve new pinned Rust TLS dependencies
+        run: cargo metadata --format-version 1 > /dev/null
+      - name: Emit lockfile snapshot for audited main commit
+        run: python3 -c 'import base64,pathlib;print("RYSTEM_LOCK64="+base64.b64encode(pathlib.Path("Cargo.lock").read_bytes()).decode())'

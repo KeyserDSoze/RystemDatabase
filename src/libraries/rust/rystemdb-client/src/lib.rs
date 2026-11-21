@@ -3,7 +3,7 @@
 //! Native RSWP v1 HELLO/PING/PUT/GET/DELETE over persistent TCP. No JSON,
 //! and no dependency on the CLI process once connected.
 //!
-//! Security: optional local-only token HELLO; NO TLS. External IPs rejected before
+//! Security: optional local-token HELLO and verified TLS1.3 (still local-only). External IPs rejected before
 //! TCP connection. This is a TDD proof-of-concept, not the future async SDK.
 pub use rystemdb_protocol::{
     decode, encode, read_frame, write_frame, Frame, Kind, Operation, ProtocolError,
@@ -11,7 +11,7 @@ pub use rystemdb_protocol::{
 };
 use rystemdb_core::{decode as decode_document, encode as encode_document, CodecError, Value};
 use std::fmt;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
@@ -28,6 +28,7 @@ pub enum ClientError {
     Rejected(u16),
     ResponseMismatch,
     RequestIdExhausted,
+    TlsConfig,
 }
 impl fmt::Display for ClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -41,6 +42,7 @@ impl fmt::Display for ClientError {
             Self::Rejected(status) => write!(f, "server returned RSWP status {status}"),
             Self::ResponseMismatch => write!(f, "server reply did not match the outstanding request"),
             Self::RequestIdExhausted => write!(f, "request ID counter exhausted"),
+            Self::TlsConfig => write!(f, "invalid TLS trust or connection configuration"),
         }
     }
 }
@@ -66,8 +68,36 @@ impl From<CodecError> for ClientError {
 
 /// Single persistent TCP connection to an experimental *localhost only* Rystem
 /// server. This is synchronous, not pooled, multi-connection or TLS capable.
+enum Transport {
+    Plain(TcpStream),
+    Tls(rustls::StreamOwned<rustls::ClientConnection, TcpStream>),
+}
+impl Read for Transport {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.read(bytes),
+            Self::Tls(stream) => stream.read(bytes),
+        }
+    }
+}
+impl Write for Transport {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.write(bytes),
+            Self::Tls(stream) => stream.write(bytes),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Plain(stream) => stream.flush(),
+            Self::Tls(stream) => stream.flush(),
+        }
+    }
+}
+
+/// One persistent local binary connection: plaintext developer mode or TLS1.3.
 pub struct LocalClient {
-    stream: TcpStream,
+    stream: Transport,
     request_id: u64,
 }
 
@@ -91,28 +121,75 @@ impl LocalClient {
         stream.set_read_timeout(Some(TIMEOUT))?;
         stream.set_write_timeout(Some(TIMEOUT))?;
         stream.set_nodelay(true)?;
-        let mut client = Self { stream, request_id: 1 };
+        let mut client = Self { stream: Transport::Plain(stream), request_id: 1 };
+        client.finish_hello(token)?;
+        Ok(client)
+    }
+
+    fn finish_hello(&mut self, token: Option<&[u8; 32]>) -> Result<(), ClientError> {
         let mut hello = vec![1, 0];
         if let Some(secret) = token {
             hello.extend_from_slice(&[0, 32]);
             hello.extend_from_slice(secret);
         }
-        let frame = client.call(Operation::Hello, hello)?;
+        let frame = self.call(Operation::Hello, hello)?;
         if frame.status != 0 {
             return Err(ClientError::Rejected(frame.status));
         }
         if frame.payload != [1, 0] {
             return Err(ClientError::ResponseMismatch);
         }
-        Ok(client)
+        Ok(())
     }
 
-    /// RED contract: TLS 1.3-only local connection, real verification pending.
+    /// Verified TLS 1.3-only connection to a numeric loopback address.
+    /// The server name is checked against the chain issued by the given CA;
+    /// no custom insecure verifier, TLS1.2 or plaintext fallback is possible.
+    /// The bearer token is not transmitted until the TLS handshake has finished.
     pub fn connect_tls(
-        _addr: SocketAddr, _server_name: &str, _ca_file: &std::path::Path,
-        _token: &[u8; 32],
+        addr: SocketAddr, server_name: &str, ca_file: &std::path::Path,
+        token: &[u8; 32],
     ) -> Result<Self, ClientError> {
-        Err(ClientError::ResponseMismatch)
+        if !addr.ip().is_loopback() {
+            return Err(ClientError::RemoteForbidden);
+        }
+        let pem = std::fs::read(ca_file)?;
+        if pem.len() > 64 * 1024 { return Err(ClientError::TlsConfig); }
+        let mut reader = pem.as_slice();
+        let certs = rustls_pemfile::certs(&mut reader)
+            .collect::<Result<Vec<_>, _>>().map_err(|_| ClientError::TlsConfig)?;
+        if certs.is_empty() { return Err(ClientError::TlsConfig); }
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in certs {
+            roots.add(cert).map_err(|_| ClientError::TlsConfig)?;
+        }
+        let server_name = rustls::pki_types::ServerName::try_from(server_name.to_owned())
+            .map_err(|_| ClientError::TlsConfig)?;
+        let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(|_| ClientError::TlsConfig)?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let mut socket = TcpStream::connect_timeout(&addr, TIMEOUT)?;
+        socket.set_read_timeout(Some(TIMEOUT))?;
+        socket.set_write_timeout(Some(TIMEOUT))?;
+        socket.set_nodelay(true)?;
+        let mut connection = rustls::ClientConnection::new(
+            std::sync::Arc::new(config), server_name
+        ).map_err(|_| ClientError::TlsConfig)?;
+        // Complete hostname/chain verification BEFORE sending the token or
+        // any RSWP application data, and never silently fallback to plaintext.
+        while connection.is_handshaking() {
+            connection.complete_io(&mut socket)?;
+        }
+        if connection.protocol_version() != Some(rustls::ProtocolVersion::TLSv1_3) {
+            return Err(ClientError::TlsConfig);
+        }
+        let stream = Transport::Tls(rustls::StreamOwned::new(connection, socket));
+        let mut client = Self { stream, request_id: 1 };
+        client.finish_hello(Some(token))?;
+        Ok(client)
     }
 
     /// Verify the open connection is still responsive; use the same socket.

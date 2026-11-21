@@ -1,14 +1,15 @@
 //! Experimental loopback-only RSWP RPC server.
 //!
-//! Security: optional *local-only* credential-file ACL, NO TLS. Refuse every non-loopback binding.
+//! Security: optional TLS1.3 + local ACL. No secure remote bindings yet; deny all nonloopback.
 //! The server owns ONE DocumentStore for its whole lifetime, and all clients
 //! share it behind a mutex. A bounded fixed worker pool prevents unlimited
 //! threads from untrusted socket connections. Not a public network database.
 use crate::auth::{AuthPolicy, Grant};
+use crate::tls;
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
 use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
 use rystemdb_storage::DocumentStore;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
@@ -29,7 +30,7 @@ const UNAUTHORIZED: u16 = 6;
 /// Starts the loopback-only binary service. The default health-only HTTP server
 /// remains a separate CLI command and keeps its original behavior.
 pub fn run(args: &[String]) -> Result<(), String> {
-    let (mut data, mut listen, mut auth_file) = (None, None, None);
+    let (mut data, mut listen, mut auth_file, mut tls_cert, mut tls_key) = (None, None, None, None, None);
     let mut pos = 0;
     while pos < args.len() {
         let flag = args[pos].as_str();
@@ -38,6 +39,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--data" => &mut data,
             "--listen" => &mut listen,
             "--auth-file" => &mut auth_file,
+            "--tls-cert" => &mut tls_cert,
+            "--tls-key" => &mut tls_key,
             _ => return Err(format!("unknown rpc-serve argument: {flag}")),
         };
         if target.replace(value.as_str()).is_some() {
@@ -52,7 +55,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     // Critical: validation precedes DocumentStore::open, so an insecure
     // attempted bind cannot even create a new database directory.
     if !addr.ip().is_loopback() {
-        return Err("rpc-serve is restricted to loopback; TLS/auth not implemented".into());
+        return Err("rpc-serve is restricted to loopback; secure remote transport not yet enabled".into());
     }
 
     // Fail closed on invalid credentials/permissions BEFORE binding the socket
@@ -60,6 +63,18 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let policy = match auth_file {
         Some(path) => Some(Arc::new(AuthPolicy::load(Path::new(path))?)),
         None => None, // backward-compatible, localhost-only developer mode
+    };
+    // A TLS endpoint must also have explicitly defined per-collection ACLs;
+    // no anonymous TLS (and never a plaintext fallback) in this mode.
+    if tls_cert.is_some() != tls_key.is_some() {
+        return Err("TLS requires both --tls-cert and --tls-key".into());
+    }
+    if tls_cert.is_some() && policy.is_none() {
+        return Err("TLS mode requires --auth-file with explicit collection permissions".into());
+    }
+    let tls_config = match (tls_cert, tls_key) {
+        (Some(cert), Some(key)) => Some(tls::server_config(Path::new(cert), Path::new(key))?),
+        _ => None,
     };
     let listener = TcpListener::bind(addr).map_err(|err| format!("RPC bind failed: {err}"))?;
     let db = Arc::new(Mutex::new(
@@ -71,13 +86,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let db = Arc::clone(&db);
         let rx = Arc::clone(&shared_rx);
         let policy = policy.clone();
+        let tls_config = tls_config.clone();
         thread::spawn(move || loop {
             let accepted = {
                 let Ok(receiver) = rx.lock() else { break };
                 receiver.recv()
             };
             let Ok(stream) = accepted else { break };
-            handle_client(stream, &db, policy.as_deref());
+            handle_client(stream, &db, policy.as_deref(), tls_config.as_ref());
         });
     }
     println!("Rystem Database experimental LOOPBACK RPC listening on {}",
@@ -98,13 +114,29 @@ pub fn run(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>, policy: Option<&AuthPolicy>) {
+fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
+    policy: Option<&AuthPolicy>, tls: Option<&Arc<rustls::ServerConfig>>)
+{
     if stream.set_read_timeout(Some(TIMEOUT)).is_err()
         || stream.set_write_timeout(Some(TIMEOUT)).is_err()
     {
         return;
     }
     let _ = stream.set_nodelay(true);
+    if let Some(config) = tls {
+        let Ok(conn) = rustls::ServerConnection::new(Arc::clone(config)) else {
+            return;
+        };
+        let mut wrapped = rustls::StreamOwned::new(conn, stream);
+        handle_client_frames(&mut wrapped, db, policy);
+    } else {
+        handle_client_frames(&mut stream, db, policy);
+    }
+}
+
+fn handle_client_frames<S: Read + Write>(
+    stream: &mut S, db: &Mutex<DocumentStore>, policy: Option<&AuthPolicy>
+) {
     let mut greeted = false;
     let mut grants: Option<Vec<Grant>> = None;
     for _ in 0..MAX_REQUESTS_PER_CONNECTION {

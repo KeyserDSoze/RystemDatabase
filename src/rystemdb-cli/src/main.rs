@@ -2,6 +2,7 @@
 mod auth;
 mod json_codec;
 mod rpc;
+mod tls;
 
 use rystemdb_storage::DocumentStore;
 use std::env;
@@ -20,13 +21,13 @@ Usage:\n\
   rystemdb document get --data PATH --collection NAME --id ID\n\
   rystemdb document delete --data PATH --collection NAME --id ID\n\
   rystemdb serve [--listen 127.0.0.1:8787]\n\
-  rystemdb rpc-serve --data PATH [--listen 127.0.0.1:8790] [--auth-file PRIVATE_PATH]\n\
+  rystemdb rpc-serve --data PATH [--listen 127.0.0.1:8790] [--auth-file PRIVATE_PATH] [--tls-cert CERT --tls-key KEY]\n\
   rystemdb --help\n\
 PUT accepts JSON from stdin (--json -) or a local file (--json FILE).\n\
 --typed-json explicitly interprets $rystem tagged references/bytes.\n\
 The CLI persists binary documents; HTTP serve exposes health only; rpc-serve has local binary CRUD.\n\
-RPC is experimental localhost-only; --auth-file enables private-token collection ACLs. No TLS.\n\
-No SQL, TLS 1.3, secure remote authentication, distributed RPC, or multi-document transactions yet.\n"
+RPC is localhost-only; --auth-file enables ACL, TLS 1.3 requires --tls-cert and --tls-key.\n\
+No SQL, mTLS, secure remote access, distributed RPC, or multi-document transactions yet.\n"
 }
 
 fn response_for(request: &[u8]) -> &'static [u8] {
