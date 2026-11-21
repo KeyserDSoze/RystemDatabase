@@ -1,11 +1,12 @@
 /**
  * Experimental localhost-only RSWP v1 TCP client; optional local token,
- * but still NO TLS or remote authenticated transport.
+ * plus explicit certificate-verified TLS1.3. NEVER supports remote bindings.
  * Concurrent requests are correlated by u64 ID on one persistent socket.
  * Incomplete, invalid or timed-out connections fail closed; writes are not
  * automatically retried because the server-side outcome may be uncertain.
  */
 import { Socket } from "node:net";
+import { connect as connectTlsSocket, type TLSSocket } from "node:tls";
 import { encode, decode, HEADER_LEN, MAX_PAYLOAD_BYTES, type Frame,
   type Operation } from "./wire.ts";
 import { encodeCrudKey } from "./crud.ts";
@@ -91,11 +92,80 @@ export class RystemLocalClient {
     }
   }
 
-  /** RED: certificate-verified TLS1.3 client implementation pending. */
-  static async connectTls(_options: {
+  /**
+   * Real TLS1.3-only client to an explicit numeric loopback target.
+   * Node validates the server chain against the caller-supplied root and the
+   * DNS SAN against serverName. Only after 'secureConnect' with authorized=true
+   * do we send the RSWP bearer token. No rejectUnauthorized=false, no custom
+   * certificate bypass, no plaintext fallback or external network access.
+   *
+   * Production mTLS, remote routing and credential lifecycle are NOT available.
+   */
+  static async connectTls(options: {
     host: string; port: number; serverName: string; ca: string | Uint8Array; token: Uint8Array
   }): Promise<RystemLocalClient> {
-    throw new Error("TLS client not implemented");
+    if (!options || (options.host !== "127.0.0.1" && options.host !== "::1")) {
+      throw new Error("Rystem TLS client requires a numeric loopback host");
+    }
+    if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
+      throw new Error("Invalid Rystem TLS client port");
+    }
+    if (typeof options.serverName !== "string" || !options.serverName.trim()) {
+      throw new Error("Expected a TLS server DNS name for certificate SAN verification");
+    }
+    if (!(options.token instanceof Uint8Array) || options.token.length !== 32) {
+      throw new Error("Rystem TLS client requires exactly 32 raw token bytes");
+    }
+    if (!(typeof options.ca === "string" ||
+          options.ca instanceof Uint8Array) || options.ca.length === 0 ||
+        options.ca.length > 65536) {
+      throw new Error("Rystem TLS client requires an explicit bounded root CA PEM");
+    }
+    const root = typeof options.ca === "string" ? options.ca : Buffer.from(options.ca);
+    const token = Uint8Array.from(options.token);
+    const socket: TLSSocket = connectTlsSocket({
+      host: options.host,
+      port: options.port,
+      servername: options.serverName,
+      ca: root,
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
+      rejectUnauthorized: true,
+    });
+    const client = new RystemLocalClient(socket);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          socket.off("secureConnect", secure);
+          socket.off("error", fail);
+          socket.off("close", closed);
+        };
+        const secure = () => {
+          cleanup();
+          if (!socket.authorized || socket.getProtocol() !== "TLSv1.3") {
+            reject(new Error("Rystem TLS 1.3 certificate verification failed"));
+          } else {
+            resolve();
+          }
+        };
+        const fail = (error: Error) => { cleanup(); reject(error); };
+        const closed = () => { cleanup(); reject(new Error("TLS socket closed before authentication")); };
+        socket.once("secureConnect", secure);
+        socket.once("error", fail);
+        socket.once("close", closed);
+      });
+      const hello = await client.request(1, Uint8Array.from([1, 0, 0, 32, ...token]));
+      if (hello.status !== 0) throw new RystemRpcError(hello.status);
+      if (hello.payload.length !== 2 || hello.payload[0] !== 1 || hello.payload[1] !== 0) {
+        throw new Error("Rystem TLS server returned invalid RSWP HELLO");
+      }
+      return client;
+    } catch (error) {
+      socket.destroy();
+      throw error;
+    } finally {
+      token.fill(0);
+    }
   }
 
   async ping(): Promise<void> {
