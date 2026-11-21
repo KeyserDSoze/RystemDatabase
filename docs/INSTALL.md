@@ -1,6 +1,6 @@
 # Installation and distribution
 
-**Not available until GitHub Releases and (for npx) npm registry publishing complete.** These are packaging contracts, not a claim that binaries are already downloadable.
+**Available only after GitHub Releases completes and (for npx) npm registry publishing completes.** These are packaging contracts, not a claim that binaries are already downloadable.
 
 ## Linux and macOS
 

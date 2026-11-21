@@ -31,7 +31,7 @@ async function download(url) {
 }
 
 export async function ensureInstalled(version) {
-  if (!/^0|[1-9]/.test(version) || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
     throw new Error('Invalid package version');
   }
   const filename = platformAsset();

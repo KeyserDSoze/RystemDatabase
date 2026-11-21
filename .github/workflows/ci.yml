@@ -46,3 +46,14 @@ jobs:
       - run: docker build -f docker/Dockerfile -t rystemdb:ci .
       - name: Verify container executable
         run: docker run --rm rystemdb:ci --version
+      - name: Smoke-test live HTTP readiness
+        shell: bash
+        run: |
+          cid="$(docker run -d -p 127.0.0.1:18787:8787 rystemdb:ci)"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:18787/healthz | grep -q '"status":"ok"'; then exit 0; fi
+            sleep 1
+          done
+          docker logs "$cid"
+          exit 1

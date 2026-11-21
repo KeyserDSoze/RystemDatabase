@@ -2,7 +2,7 @@
 
 **Hybrid document + relational + analytical database, built in Rust.**
 
-> **Status: foundation preview only.** A nested typed binary document codec and minimal health-only CLI exist. There is **no durable storage, data API, indexes, SQL, MVCC, or production deployment** yet. Packaging workflows are prepared; no release or npm publication is implied.
+> **Status: foundation preview only.** A nested typed binary document codec and minimal health-only CLI exist. There is **no durable storage, data API, indexes, SQL, MVCC, or production deployment** yet. Packaging workflows are prepared; a main push automatically attempts a one-time prerelease for a new version. Publication must be independently verified.
 
 Rystem Database follows the top-level structure of [TemporalMark](https://github.com/KeyserDSoze/TemporalMark): `src/`, `tests/`, `docs/`, `adr/`, `scripts/`, `docker/`, `infra/`, `.github/`.
 

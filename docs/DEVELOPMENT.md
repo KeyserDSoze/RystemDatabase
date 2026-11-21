@@ -21,6 +21,6 @@ Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/re
 
 ## Releasing
 
-Use a semver tag matching Cargo workspace and `npm/cli/package.json`, for example `v0.1.0`. The tag workflow verifies tests, builds native files, uploads SHA256SUMS to a GitHub prerelease and publishes a GHCR image. npm publishing needs `NPM_TOKEN` and ownership of the `rystemdb` package on npm; without the token the package step is intentionally skipped. Check release asset smoke tests before advertising an installer.
+A main push automatically publishes a prerelease only if the semver release corresponding to `npm/cli/package.json` does not already exist; later main pushes at the same version do not replace immutable assets. A matching `vX.Y.Z` tag can also launch the workflow. The release job verifies tests, builds native files, uploads SHA256SUMS to GitHub Releases and publishes a GHCR image. Bump Cargo workspace and npm package versions together before the next version. npm publishing needs `NPM_TOKEN` and ownership of the `rystemdb` package on npm; without the token the package step is intentionally skipped. Check release asset smoke tests before advertising an installer.
 
 This foundation cannot store data; do not use the health server as a deployed database.

@@ -1,6 +1,7 @@
 name: Native and container release
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -8,6 +9,32 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify new version and check existing release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(node -p "require('./npm/cli/package.json').version")"
+          tag="v$version"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag and npm version differ" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Release $tag already exists; not republishing immutable assets."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -26,7 +53,8 @@ jobs:
           version="$(node -p "require('./npm/cli/package.json').version")"
           test "$GITHUB_REF_NAME" = "v$version"
   binaries:
-    needs: verify
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, verify]
     strategy:
       fail-fast: false
       matrix:
@@ -74,8 +102,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   github-release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: binaries
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, binaries]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -91,16 +119,13 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         shell: bash
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --prerelease
-          fi
+          gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --generate-notes --prerelease
   npm-publish:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: github-release
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, github-release]
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -123,8 +148,8 @@ jobs:
         if: env.NPM_TOKEN == ''
         run: echo "Skipped npm publish; configure NPM_TOKEN and verify ownership of the rystemdb npm name."
   container:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: verify
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -141,4 +166,4 @@ jobs:
           context: .
           file: docker/Dockerfile
           push: true
-          tags: ghcr.io/keysersdoze/rystemdatabase:${{ github.ref_name }}
+          tags: ghcr.io/keysersdoze/rystemdatabase:${{ needs.prepare.outputs.tag }}
