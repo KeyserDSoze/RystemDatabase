@@ -178,6 +178,7 @@ impl DocumentStore {
     /// PUT replaces any existing document under the same ID. Success means
     /// the complete frame has been synced before the method returned.
     pub fn put(&mut self, id: &str, value: &Value) -> Result<(), StoreError> {
+        self.ensure_healthy()?;
         validate_id(id)?;
         let encoded = encode(value)?;
         let frame = frame(id, Some(&encoded))?;
@@ -204,6 +205,7 @@ impl DocumentStore {
 
     /// Write an append-only tombstone; returns false without writing if absent.
     pub fn delete(&mut self, id: &str) -> Result<bool, StoreError> {
+        self.ensure_healthy()?;
         validate_id(id)?;
         if !self.entries.contains_key(id) {
             return Ok(false);
@@ -217,6 +219,12 @@ impl DocumentStore {
     pub fn len(&self) -> usize { self.entries.len() }
 
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    // Treat a failed fsync/write/segment creation as an uncertain operation:
+    // no further mutation, including an absent-id deletion, can succeed.
+    fn ensure_healthy(&self) -> Result<(), StoreError> {
+        if self.poisoned { Err(StoreError::Poisoned) } else { Ok(()) }
+    }
 
     fn append(&mut self, frame: &[u8]) -> Result<Location, StoreError> {
         if self.poisoned {
@@ -236,6 +244,8 @@ impl DocumentStore {
         // Production/default builds do not read env vars or call exit().
         #[cfg(feature = "fault-injection")]
         fault_if("before_append");
+        #[cfg(feature = "fault-injection")]
+        inject_io_if("io_before_append")?;
         let offset = self.active.metadata()?.len();
         if offset > 0 && offset.saturating_add(frame.len() as u64) > self.segment_limit {
             let next = self.active_id.checked_add(1).ok_or_else(|| {
@@ -244,6 +254,8 @@ impl DocumentStore {
             if next > 99_999_999 {
                 return Err(StoreError::Corrupt("segment counter exhausted".into()));
             }
+            #[cfg(feature = "fault-injection")]
+            inject_io_if("io_segment_create")?;
             let new_active = create_segment(&self.root, next)?;
             self.active = new_active;
             self.active_id = next;
@@ -259,12 +271,24 @@ impl DocumentStore {
             self.active.sync_data()?;
             std::process::exit(97);
         }
+        #[cfg(feature = "fault-injection")]
+        if test_io_fault_is("io_short_write") {
+            // Deterministic short-write simulation: persist a truncated record,
+            // then return an I/O error without updating in-memory indexes.
+            self.active.write_all(&frame[..frame.len() / 2])?;
+            self.active.sync_data()?;
+            inject_io_if("io_short_write")?;
+        }
         self.active.write_all(frame)?;
         #[cfg(feature = "fault-injection")]
         fault_if("after_frame_before_sync");
+        #[cfg(feature = "fault-injection")]
+        inject_io_if("io_sync_data")?;
         self.active.sync_data()?;
         #[cfg(feature = "fault-injection")]
         fault_if("after_sync_before_publish");
+        #[cfg(feature = "fault-injection")]
+        inject_io_if("io_after_sync")?;
         Ok(Location { segment: self.active_id, offset })
     }
 }
@@ -282,6 +306,23 @@ fn fault_if(point: &str) {
         // process, NOT sudden power loss or failed physical disk persistence.
         std::process::exit(97);
     }
+}
+
+// Synthetic I/O failures are compiled out of normal and release builds.
+// They emulate error *returns*, not physical power-loss effects.
+#[cfg(feature = "fault-injection")]
+fn test_io_fault_is(point: &str) -> bool {
+    std::env::var("RYSTEMDB_TEST_IO_ERROR").as_deref() == Ok(point)
+}
+
+#[cfg(feature = "fault-injection")]
+fn inject_io_if(point: &str) -> Result<(), StoreError> {
+    if test_io_fault_is(point) {
+        return Err(StoreError::Io(io::Error::other(format!(
+            "injected I/O failure at {point}"
+        ))));
+    }
+    Ok(())
 }
 
 // Explicitly release ownership at the end of the DocumentStore lifetime.
@@ -325,7 +366,11 @@ fn create_segment(root: &Path, id: u64) -> Result<File, StoreError> {
         .read(true)
         .append(true)
         .open(segment_path(root, id))?;
+    #[cfg(feature = "fault-injection")]
+    inject_io_if("io_segment_sync")?;
     file.sync_all()?;
+    #[cfg(feature = "fault-injection")]
+    inject_io_if("io_segment_directory_sync")?;
     sync_directory(root)?;
     Ok(file)
 }
