@@ -245,3 +245,72 @@ fn tdd_rejects_invalid_segment_config() {
     let tmp = TempDir::new();
     assert!(matches!(DocumentStore::open_with_segment_limit(tmp.path(), 0), Err(StoreError::InvalidSegmentLimit)));
 }
+
+
+#[test]
+fn tdd_exclusive_lock_rejects_competing_writer_and_releases_on_drop() {
+    let tmp = TempDir::new();
+    let first = DocumentStore::open(tmp.path()).unwrap();
+    assert!(DocumentStore::open(tmp.path()).is_err(), "second writer must be rejected");
+    drop(first);
+    assert!(DocumentStore::open(tmp.path()).is_ok(), "reopen must work after normal close");
+}
+
+// Explicit child entrypoints only run when invoked by the parent test with an env variable.
+#[test]
+fn tdd_exclusive_lock_child_probe() {
+    if let Some(path) = std::env::var_os("RYSTEMDB_LOCK_PROBE_DIR") {
+        assert!(DocumentStore::open(PathBuf::from(path)).is_err(),
+            "concurrent child process unexpectedly acquired writer lock");
+    }
+}
+
+#[test]
+fn tdd_exclusive_lock_rejects_another_process() {
+    let tmp = TempDir::new();
+    let _first = DocumentStore::open(tmp.path()).unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tdd_exclusive_lock_child_probe", "--nocapture"])
+        .env("RYSTEMDB_LOCK_PROBE_DIR", tmp.path())
+        .output().unwrap();
+    assert!(output.status.success(), "child probe must reject writer: {}",
+        String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn tdd_lock_holder_child() {
+    if let Some(path) = std::env::var_os("RYSTEMDB_LOCK_HOLDER_DIR") {
+        let path = PathBuf::from(path);
+        let _store = DocumentStore::open(&path).unwrap();
+        fs::write(path.join("lock-holder-ready"), b"ready").unwrap();
+        loop { std::thread::sleep(std::time::Duration::from_secs(1)); }
+    }
+}
+
+#[test]
+fn tdd_crashed_lock_holder_does_not_leave_stale_ownership() {
+    use std::time::Duration;
+    let tmp = TempDir::new();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tdd_lock_holder_child", "--nocapture"])
+        .env("RYSTEMDB_LOCK_HOLDER_DIR", tmp.path())
+        .spawn().unwrap();
+    let ready = tmp.path().join("lock-holder-ready");
+    let mut started = false;
+    for _ in 0..100 {
+        if ready.is_file() { started = true; break; }
+        if child.try_wait().unwrap().is_some() { break; }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !started {
+        child.kill().ok();
+        child.wait().ok();
+        panic!("lock holder child failed to initialize");
+    }
+    let competing = DocumentStore::open(tmp.path());
+    child.kill().ok(); // forced process termination: no Rust Drop in child
+    child.wait().unwrap();
+    assert!(competing.is_err(), "concurrent writer should not enter");
+    assert!(DocumentStore::open(tmp.path()).is_ok(),
+        "OS must release the lock automatically on process death");
+}
