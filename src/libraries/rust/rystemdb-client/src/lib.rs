@@ -107,6 +107,14 @@ impl LocalClient {
         Ok(client)
     }
 
+    /// RED contract: TLS 1.3-only local connection, real verification pending.
+    pub fn connect_tls(
+        _addr: SocketAddr, _server_name: &str, _ca_file: &std::path::Path,
+        _token: &[u8; 32],
+    ) -> Result<Self, ClientError> {
+        Err(ClientError::ResponseMismatch)
+    }
+
     /// Verify the open connection is still responsive; use the same socket.
     pub fn ping(&mut self) -> Result<(), ClientError> {
         let frame = self.call(Operation::Ping, Vec::new())?;
