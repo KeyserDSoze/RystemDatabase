@@ -1,0 +1,15 @@
+[package]
+name = "rystemdb-cli"
+description = "Rystem Database native CLI and foundation health server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rystemdb"
+path = "src/main.rs"
+
+[dependencies]
+rystemdb-core = { path = "../rystemdb-core" }

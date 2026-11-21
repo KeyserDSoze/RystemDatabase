@@ -1,0 +1,11 @@
+[package]
+name = "rystemdb-core"
+description = "Rystem Database core binary document codec (foundation)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
