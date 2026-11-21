@@ -1,4 +1,5 @@
 //! Native Rystem Database CLI. The network endpoint remains health-only.
+mod auth;
 mod json_codec;
 mod rpc;
 
@@ -19,12 +20,12 @@ Usage:\n\
   rystemdb document get --data PATH --collection NAME --id ID\n\
   rystemdb document delete --data PATH --collection NAME --id ID\n\
   rystemdb serve [--listen 127.0.0.1:8787]\n\
-  rystemdb rpc-serve --data PATH [--listen 127.0.0.1:8790]\n\
+  rystemdb rpc-serve --data PATH [--listen 127.0.0.1:8790] [--auth-file PRIVATE_PATH]\n\
   rystemdb --help\n\
 PUT accepts JSON from stdin (--json -) or a local file (--json FILE).\n\
 --typed-json explicitly interprets $rystem tagged references/bytes.\n\
 The CLI persists binary documents; the network server exposes only health endpoints.\n\
-RPC is experimental localhost-only and unauthenticated; NEVER expose externally.\n\
+RPC is experimental localhost-only; --auth-file enables private-token collection ACLs. No TLS.\n\
 No SQL, TLS/auth, distributed RPC, or multi-document transactions yet.\n"
 }
 

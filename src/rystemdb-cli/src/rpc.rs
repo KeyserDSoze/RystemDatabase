@@ -1,14 +1,16 @@
 //! Experimental loopback-only RSWP RPC server.
 //!
-//! Security: intentionally NO TLS/auth yet. Refuse every non-loopback binding.
+//! Security: optional *local-only* credential-file ACL, NO TLS. Refuse every non-loopback binding.
 //! The server owns ONE DocumentStore for its whole lifetime, and all clients
 //! share it behind a mutex. A bounded fixed worker pool prevents unlimited
 //! threads from untrusted socket connections. Not a public network database.
+use crate::auth::{AuthPolicy, Grant};
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
 use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
 use rystemdb_storage::DocumentStore;
 use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,11 +24,12 @@ const OK: u16 = 0;
 const NOT_FOUND: u16 = 1;
 const BAD_REQUEST: u16 = 2;
 const INTERNAL: u16 = 4;
+const UNAUTHORIZED: u16 = 6;
 
 /// Starts the loopback-only binary service. The default health-only HTTP server
 /// remains a separate CLI command and keeps its original behavior.
 pub fn run(args: &[String]) -> Result<(), String> {
-    let (mut data, mut listen) = (None, None);
+    let (mut data, mut listen, mut auth_file) = (None, None, None);
     let mut pos = 0;
     while pos < args.len() {
         let flag = args[pos].as_str();
@@ -34,6 +37,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let target = match flag {
             "--data" => &mut data,
             "--listen" => &mut listen,
+            "--auth-file" => &mut auth_file,
             _ => return Err(format!("unknown rpc-serve argument: {flag}")),
         };
         if target.replace(value.as_str()).is_some() {
@@ -51,6 +55,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("rpc-serve is restricted to loopback; TLS/auth not implemented".into());
     }
 
+    // Fail closed on invalid credentials/permissions BEFORE binding the socket
+    // or opening/creating any database files.
+    let policy = match auth_file {
+        Some(path) => Some(Arc::new(AuthPolicy::load(Path::new(path))?)),
+        None => None, // backward-compatible, localhost-only developer mode
+    };
     let listener = TcpListener::bind(addr).map_err(|err| format!("RPC bind failed: {err}"))?;
     let db = Arc::new(Mutex::new(
         DocumentStore::open(data).map_err(|err| format!("RPC database open failed: {err}"))?
@@ -60,13 +70,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
     for _ in 0..WORKERS {
         let db = Arc::clone(&db);
         let rx = Arc::clone(&shared_rx);
+        let policy = policy.clone();
         thread::spawn(move || loop {
             let accepted = {
                 let Ok(receiver) = rx.lock() else { break };
                 receiver.recv()
             };
             let Ok(stream) = accepted else { break };
-            handle_client(stream, &db);
+            handle_client(stream, &db, policy.as_deref());
         });
     }
     println!("Rystem Database experimental LOOPBACK RPC listening on {}",
@@ -87,7 +98,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>) {
+fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>, policy: Option<&AuthPolicy>) {
     if stream.set_read_timeout(Some(TIMEOUT)).is_err()
         || stream.set_write_timeout(Some(TIMEOUT)).is_err()
     {
@@ -95,6 +106,7 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>) {
     }
     let _ = stream.set_nodelay(true);
     let mut greeted = false;
+    let mut grants: Option<Vec<Grant>> = None;
     for _ in 0..MAX_REQUESTS_PER_CONNECTION {
         let request = match read_frame(&mut stream) {
             Ok(request) => request,
@@ -104,11 +116,21 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>) {
             break;
         }
         let (status, payload, close) = if !greeted {
-            if request.operation != Operation::Hello || request.payload != [1, 0] {
+            if request.operation != Operation::Hello {
+                (BAD_REQUEST, Vec::new(), true)
+            } else if let Some(policy) = policy {
+                if let Some(allowed) = policy.authenticate(&request.payload) {
+                    grants = Some(allowed);
+                    greeted = true;
+                    (OK, vec![1, 0], false)
+                } else {
+                    (UNAUTHORIZED, Vec::new(), true)
+                }
+            } else if request.payload != [1, 0] {
                 (BAD_REQUEST, Vec::new(), true)
             } else {
                 greeted = true;
-                (OK, vec![1,0], false)
+                (OK, vec![1, 0], false)
             }
         } else {
             match request.operation {
@@ -116,21 +138,29 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>) {
                 Operation::Ping if request.payload.is_empty() => (OK, Vec::new(), false),
                 Operation::Ping => (BAD_REQUEST, Vec::new(), false),
                 Operation::Put | Operation::Get | Operation::Delete =>
-                    handle_document(&request, db),
+                    handle_document(&request, db, grants.as_deref()),
             }
         };
-        // Error bodies intentionally remain empty: don't disclose file paths,
-        // nested data or internal error strings over an unauthenticated link.
+        // Error bodies intentionally remain empty: don't disclose credentials,
+        // paths, nested data or internal errors even on authorization failures.
         let response = Frame::response(request.operation, request.request_id, status, payload);
         if write_frame(&mut stream, &response).is_err() { break; }
         if close { break; }
     }
 }
 
-fn handle_document(request: &Frame, db: &Mutex<DocumentStore>) -> (u16, Vec<u8>, bool) {
+fn handle_document(request: &Frame, db: &Mutex<DocumentStore>, grants: Option<&[Grant]>) -> (u16, Vec<u8>, bool) {
     let Some((key, payload_offset)) = parse_key(&request.payload) else {
         return (BAD_REQUEST, Vec::new(), false);
     };
+    if let Some(grants) = grants {
+        let collection = key.split_once('/').map(|(name, _)| name).unwrap_or("");
+        if !grants.iter().any(|grant| grant.allows(collection, request.operation)) {
+            // Deny before reading or mutating the shared store; never reveal
+            // whether an unauthorized collection/document exists.
+            return (UNAUTHORIZED, Vec::new(), false);
+        }
+    }
     // Lock the *single* writer for both reads and mutations. Per-connection
     // DocumentStore::open would violate exclusive on-disk writer ownership.
     match request.operation {
