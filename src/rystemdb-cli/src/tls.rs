@@ -11,6 +11,10 @@ const MAX_PEM_BYTES: u64 = 64 * 1024;
 const INVALID_TLS: &str = "invalid TLS server certificate/private-key configuration";
 
 fn read_pem(path: &Path, private: bool) -> Result<Vec<u8>, String> {
+    // Windows key-file ACL verification is not implemented in this prototype;
+    // keep the public argument name while avoiding an unused-variable warning.
+    #[cfg(not(unix))]
+    let _ = private;
     let before = fs::symlink_metadata(path).map_err(|_| INVALID_TLS.to_owned())?;
     if !before.file_type().is_file() || before.len() > MAX_PEM_BYTES {
         return Err(INVALID_TLS.into());
