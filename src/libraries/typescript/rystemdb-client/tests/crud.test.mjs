@@ -34,3 +34,12 @@ test("TDD RED: truncated, invalid UTF-8 and malformed lengths fail closed", () =
   assert.throws(()=>decodeCrudKey(invalid),/utf|id/i);
   assert.throws(()=>decodeCrudKey(Uint8Array.from([0,1,47,0,1,120])),/collection/i);
 });
+
+test("TDD RED: leading U+FEFF is data in a UTF-8 document ID, not a file BOM", () => {
+  const id = "\uFEFFid";
+  const encoded = encodeCrudKey("docs", id);
+  assert.deepEqual(decodeCrudKey(encoded), {
+    collection: "docs", id, document: new Uint8Array()
+  });
+  assert.deepEqual(encodeCrudKey("docs", decodeCrudKey(encoded).id), encoded);
+});

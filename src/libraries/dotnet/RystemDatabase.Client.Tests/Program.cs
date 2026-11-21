@@ -126,3 +126,17 @@ var duplicateFields = Convert.FromHexString("52444200010800000002000000017800000
 try { RystemRdbCodec.Decode(duplicateFields); throw new Exception("Duplicate keys accepted"); }
 catch (ArgumentException) { /* expected */ }
 Console.WriteLine("Rystem .NET typed RDB v1 conformance: PASS");
+
+// Leading U+FEFF is a Unicode scalar in RSWP/RDB data, not a byte-order
+// signature to discard from individual decoded UTF-8 string slices.
+var bomId = "\uFEFFid";
+Check(RystemCrudKey.Decode(RystemCrudKey.Encode("docs",bomId)).Id == bomId,
+    "C# CRUD key must preserve U+FEFF in IDs");
+var bomTyped = new RdbValue.Object(new Dictionary<string,RdbValue>
+{
+    ["\uFEFFname"] = new RdbValue.Text("\uFEFFvalue"),
+    ["reference"] = new RdbValue.Reference("users","\uFEFFid")
+});
+Check(RystemRdbCodec.Encode(RystemRdbCodec.Decode(RystemRdbCodec.Encode(bomTyped)))
+    .AsSpan().SequenceEqual(RystemRdbCodec.Encode(bomTyped)),
+    "C# typed codec must preserve UTF-8 U+FEFF scalar in data");

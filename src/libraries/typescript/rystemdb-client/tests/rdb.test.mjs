@@ -60,3 +60,13 @@ test("TDD RED: decoding enforces nesting depth and rejects malformed references"
   const invalidRef=Uint8Array.from(Buffer.from("5244420001090000000000000003313233","hex"));
   assert.throws(()=>decodeRdb(invalidRef),/reference/i);
 });
+
+test("TDD RED: typed RDB retains U+FEFF at start of object keys, values and references", () => {
+  const data = new Map([
+    ["\uFEFFname", "\uFEFFvalue"],
+    ["reference", new RdbReference("users", "\uFEFFid")],
+  ]);
+  const encoded = encodeRdb(data);
+  assert.deepEqual(decodeRdb(encoded),data);
+  assert.deepEqual(encodeRdb(decodeRdb(encoded)), encoded);
+});

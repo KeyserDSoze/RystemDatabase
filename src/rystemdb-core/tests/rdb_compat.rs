@@ -33,3 +33,14 @@ fn tdd_typed_document_order_and_malformed_binary() {
 fn hex_vec(s:&str)->Vec<u8>{
     (0..s.len()).step_by(2).map(|i|u8::from_str_radix(&s[i..i+2],16).unwrap()).collect()
 }
+
+#[test]
+fn tdd_unicode_bom_is_not_stripped_from_rdb_string_fields() {
+    let doc=Value::Object(BTreeMap::from([
+        ("\u{feff}name".into(),Value::String("\u{feff}value".into())),
+        ("reference".into(),Value::Reference{
+            collection:"users".into(),id:"\u{feff}id".into()
+        })
+    ]));
+    assert_eq!(decode(&encode(&doc).unwrap()).unwrap(),doc);
+}
