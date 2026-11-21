@@ -14,4 +14,4 @@ path = "src/main.rs"
 [dependencies]
 rystemdb-core = { path = "../rystemdb-core" }
 rystemdb-storage = { path = "../rystemdb-storage" }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["arbitrary_precision"] }

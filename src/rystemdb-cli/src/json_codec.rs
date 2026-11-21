@@ -21,14 +21,19 @@ fn from_json(value: Json, typed: bool) -> Result<Value, String> {
         Json::Null => Ok(Value::Null),
         Json::Bool(b) => Ok(Value::Bool(b)),
         Json::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(Value::Integer(i))
-            } else if n.is_f64() {
-                let f = n.as_f64().ok_or("invalid floating-point value")?;
+            // serde_json::arbitrary_precision preserves the original decimal
+            // spelling, so overflowed i64 literals never silently become f64.
+            let spelling = n.to_string();
+            let is_decimal = spelling.bytes().any(|b| matches!(b, b'.' | b'e' | b'E'));
+            if is_decimal {
+                let f: f64 = spelling.parse()
+                    .map_err(|_| "invalid floating-point value")?;
                 if !f.is_finite() { return Err("non-finite number".into()); }
                 Ok(Value::Float(f))
             } else {
-                Err("integer is outside supported signed i64 range".into())
+                let value = spelling.parse::<i64>()
+                    .map_err(|_| "integer is outside supported signed i64 range")?;
+                Ok(Value::Integer(value))
             }
         }
         Json::String(s) => Ok(Value::String(s)),
