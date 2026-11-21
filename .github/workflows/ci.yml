@@ -19,13 +19,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Rust version
         run: rustc --version
-      - name: Bootstrap JSON crate lockfile (temporary; will be committed)
-        shell: bash
-        run: |
-          cargo generate-lockfile
-          echo 'BEGIN GENERATED LOCKFILE'
-          cat Cargo.lock
-          echo 'END GENERATED LOCKFILE'
       - name: Check workspace and unit/integration tests
         run: cargo test --workspace --locked --all-targets
       - name: Storage failure and process-crash recovery matrix (feature-gated)
