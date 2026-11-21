@@ -39,3 +39,20 @@ All work is tracked by GitHub Issues, developed directly on main, with RED → G
 ## Issue status and closure policy
 
 GitHub Issues are the source of truth, not static checkboxes alone. [Browse open issues](https://github.com/KeyserDSoze/RystemDatabase/issues?q=is%3Aissue+is%3Aopen). Each change is committed directly to `main`, attached to the owning issue with RED/implementation/final-GREEN SHAs. Close only when the scoped issue's acceptance criteria and exact final `main` CI are satisfied. Do not close parent issues because a narrower child issue was completed. In particular, #1 remains open for real installer/npx validation; #2 and #17 for storage durability/compaction; #19 for investigation of a lock reopen flake.
+
+## Network and SDKs (planned)
+
+- [x] Create four `src/libraries` project folders: Rust, .NET, TypeScript and EF Core (#26–29)
+- [x] RSWP v1 fixed binary framing and Rust/.NET/TypeScript golden vector test infrastructure (#24/#27/#28, partial milestones)
+- [ ] Authenticated native RPC server, wire CRUD body schema, session pooling and complete SDK connections (#25–28)
+- [ ] Genuine EF Core provider semantics, LINQ translation, tracking and EF specification suite (#29)
+- [ ] Production TLS/cert validation, authn/authz, flow control, idempotency, version negotiation (#24/#25)
+- [ ] Arrow Flight SQL streaming analytical endpoint and interoperability (#35)
+
+## Cluster and storage performance (planned)
+
+- [ ] Deterministic shard placement/epoch, online rebalancing and scatter-gather queries (#30)
+- [ ] Replicated WAL with quorum leadership, fencing, failover and restore (#31)
+- [ ] Geo-redundancy with RPO/RTO and regional consistency policy (#32)
+- [ ] Sparse typed binary v2 with field IDs/varints/compression and migration benchmarks (#33)
+- [ ] Adaptive indexes and vectorized query benchmarks, no unverified performance claims (#34)

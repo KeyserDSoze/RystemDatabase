@@ -4,3 +4,5 @@ Future provider / DbContext integration tracked by [#29](https://github.com/Keys
 The provider must implement actual LINQ translation, change tracking, materialization, relationships and transaction semantics, then satisfy EF Core specification tests.
 
 **Status: planned — this is not a functioning EF Core provider yet.** It will build on the .NET SDK. A true EF Core provider is substantially more than an extension method.
+
+The `RystemDatabase.EntityFrameworkCore.csproj` currently builds as an **empty .NET 10 library** with a reference to the .NET client. It has no actual EF Core package or query provider code. Adding one requires first establishing the engine's relational/query/transaction semantics and passing appropriate provider specification tests.

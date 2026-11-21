@@ -1,6 +1,15 @@
-# RystemDatabase.Client (.NET)
+# RystemDatabase.Client (.NET 10)
 
-Planned public .NET SDK for the Rystem binary RPC server, tracked by [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27).
-The first working increment will implement and test the shared byte-level RSWP v1 frame codec, then a real TLS-authenticated remote client when the server is available.
+[C# SDK Issue #27](https://github.com/KeyserDSoze/RystemDatabase/issues/27).
 
-**Status: scaffold only — no operational connection yet.** Do not publish this as a functioning client until real cross-language interoperability and CI tests pass.
+**Implemented:** standalone `RystemWireCodec` with RSWP v1 24-byte header, big-endian IDs/lengths, binary payloads, input-size bounds and request/response status checks. The `RystemDatabase.Client.Tests` independent executable verifies the Rust golden PING vector, 64-bit IDs and truncated frames.
+
+**Not implemented:** an operational remote `RystemDbClient` connection, TCP/TLS/auth, request multiplexing, typed CRUD bodies, cluster discovery and NuGet publishing. These require server #25 and full conformance.
+
+Build and conformance:
+
+```sh
+dotnet run --project ../RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
+```
+
+The EF Core integration is a separate project (#29), not part of this wire codec.

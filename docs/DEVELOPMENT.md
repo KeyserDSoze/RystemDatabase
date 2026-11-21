@@ -29,3 +29,15 @@ The native CLI stores binary documents, but the `serve` endpoint remains health-
 ## Crash-injection safety
 
 `fault-injection` is a **test-only Cargo feature**, disabled in normal/release builds. Test children can exit without unwinding and are expected to leave incomplete file frames for replay. Never ship or package production binaries with that feature. A green process-crash matrix is not a proof of physical power-loss persistence; the [storage safety issues](https://github.com/KeyserDSoze/RystemDatabase/issues/17) remain open for this and other guarantees.
+
+## Protocol conformance and SDK scaffolds
+
+```sh
+cargo test -p rystemdb-protocol --locked --all-targets
+cargo test -p rystemdb-client --locked --all-targets
+cd src/libraries/typescript/rystemdb-client && npm test && cd ../../../..
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
+dotnet build src/libraries/dotnet/RystemDatabase.EntityFrameworkCore/RystemDatabase.EntityFrameworkCore.csproj --configuration Release
+```
+
+These commands only validate binary frame codecs and EF build scaffolding; no remote SDK/server integration is yet implemented. All tests must run in CI on main; do not ship unauthenticated RPC servers.

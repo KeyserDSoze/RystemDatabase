@@ -49,6 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 See [storage format, crash-recovery tests and limits](docs/STORAGE.md). Feature-gated real-process crash tests and synthetic I/O failure/replay tests are exercised in CI; this remains a **single-process experimental API** with an OS advisory single-writer lock, but without transactional multi-document updates, secondary indexes or proven physical power-loss durability.
 
+## Client libraries and distributed architecture (experimental)
+
+The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP v1 frame codecs with TDD conformance tests; **no remote network connection or EF Core provider functionality is implemented yet**.
+
+- [RSWP v1 binary protocol](docs/WIRE_PROTOCOL.md): 24-byte versioned envelope, 64-bit correlation ID, bounded payload; designed for future authenticated TCP/TLS transport.
+- [Distributed design](docs/DISTRIBUTED_ARCHITECTURE.md): shard routing/epochs, replicated WAL/quorum, regional asynchronous replication and failover proposals; **not implemented**.
+- [Issues #23–#35](https://github.com/KeyserDSoze/RystemDatabase/issues/23): actual feature backlog for server, clients, EF, sharding, geo, adaptive indexing, sparse storage and analytical Arrow Flight SQL.
+
 ## Distribution
 
 - [GitHub Releases](https://github.com/KeyserDSoze/RystemDatabase/releases): native Linux x64/arm64, macOS x64/arm64, Windows x64 binaries and SHA-256 checksums. `v0.1.1` is health-only; the planned `v0.1.2` is the first document CRUD CLI preview once its release workflow is confirmed.

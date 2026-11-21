@@ -1,19 +1,21 @@
-# Client libraries for Rystem Database
+# Rystem Database client libraries
 
-This folder has four libraries:
-- `dotnet/RystemDatabase.Client`: .NET (C#) RPC client, [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27)
-- `rust/rystemdb-client`: Rust typed RPC client, [#26](https://github.com/KeyserDSoze/RystemDatabase/issues/26)
-- `typescript/rystemdb-client`: TypeScript/Node.js RPC client, [#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28)
-- `dotnet/RystemDatabase.EntityFrameworkCore`: EF Core provider, [#29](https://github.com/KeyserDSoze/RystemDatabase/issues/29)
+Four project directories, all developed directly on `main`:
 
-Shared protocol implementation: `src/rystemdb-protocol` (spec and wire conformance [#24](https://github.com/KeyserDSoze/RystemDatabase/issues/24)).
+| Library | Path | Stage | Issue |
+| --- | --- | --- | --- |
+| Rust | `rust/rystemdb-client` | Exposes tested RSWP frame codec; no live connection yet | #26 |
+| .NET | `dotnet/RystemDatabase.Client` | .NET 10 RSWP framing codec tested; no live connection yet | #27 |
+| TypeScript | `typescript/rystemdb-client` | Node.js 22+ TypeScript RSWP framing codec tested; no live connection yet | #28 |
+| EF Core | `dotnet/RystemDatabase.EntityFrameworkCore` | Buildable .NET project scaffold only, **not an EF Core provider** | #29 |
 
-**As of first scaffolding:** only the Rust client crate exposes frame types; these packages do **not** yet provide working remote connections. Remote server and TLS/auth are [#25](https://github.com/KeyserDSoze/RystemDatabase/issues/25). Do not advertise any SDK as production-ready.
+The separate `src/rystemdb-protocol` crate is the binary wire frame reference (#24); the server (#25), TLS/auth, interoperability against live RPC and CRUD payload schemas remain separate work.
 
-## Required definition of done
-- Matching Rust/.NET/TypeScript binary golden vectors, malformed-frame tests and protocol-version negotiation
-- Real TCP/TLS server end-to-end CRUD tests and authentication
-- Backpressure, request correlation, cancellation, timeouts and retry semantics
-- Cargo / NuGet / npm package builds and verified install tests across supported platforms
+Conformance source/tests:
+- Rust: `src/rystemdb-protocol/tests/wire_contract.rs`
+- C#: `src/libraries/dotnet/RystemDatabase.Client.Tests/Program.cs`, run under the .NET 10 SDK
+- TypeScript: `src/libraries/typescript/rystemdb-client/tests/wire.test.mjs`, Node 22+
 
-This code is developed directly on `main`, with RED/GREEN TDD and GitHub Issues.
+The three codecs share a literal octet-level PING vector and reject unsupported versions/oversized or truncated frames. A codec is **not** a connection client. SDK lifecycle, pooling, timeouts, TLS, authentication and shard-aware routing are tracked in each issue.
+
+See [wire protocol](../../docs/WIRE_PROTOCOL.md), [ADR 0006](../../adr/0006-binary-rpc-clients-and-distribution.md) and [distributed design](../../docs/DISTRIBUTED_ARCHITECTURE.md). Do not publish client packages as operational until server+SDK end-to-end tests pass.
