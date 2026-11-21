@@ -76,3 +76,53 @@ invalidUtf8[10] = 255;
 try { RystemCrudKey.Decode(invalidUtf8); throw new Exception("Invalid UTF-8 accepted"); }
 catch (ArgumentException) { /* expected */ }
 Console.WriteLine("Rystem .NET CRUD key conformance: PASS");
+
+
+// RED: typed value bytes must match Rust/TypeScript exactly, not JSON.
+var nestedDoc = new RdbValue.Object(new Dictionary<string,RdbValue>(StringComparer.Ordinal)
+{
+    ["a"] = new RdbValue.Array(new RdbValue[] {
+        new RdbValue.Null(), new RdbValue.Boolean(true), new RdbValue.Integer(-1)
+    }),
+    ["b"] = new RdbValue.Bytes(new byte[]{0,255,128}),
+    ["r"] = new RdbValue.Reference("users","u42")
+});
+var goldenTyped = Convert.FromHexString(
+    "52444200010800000003" +
+    "00000001610700000003000203ffffffffffffffff" +
+    "0000000162060000000300ff80" +
+    "00000001720900000005757365727300000003753432");
+Check(RystemRdbCodec.Encode(nestedDoc).AsSpan().SequenceEqual(goldenTyped),
+    "C# nested typed RDB golden differs from Rust/TS");
+var decodedTyped = RystemRdbCodec.Decode(goldenTyped);
+Check(decodedTyped is RdbValue.Object, "Expected typed object");
+Check(RystemRdbCodec.Encode(decodedTyped).AsSpan().SequenceEqual(goldenTyped),
+    "Decoded nested RDB object did not survive roundtrip");
+var floatDoc = new RdbValue.Object(new Dictionary<string,RdbValue>
+{
+    ["absent-versus-null"] = new RdbValue.Null(),
+    ["min"] = new RdbValue.Integer(long.MinValue),
+    ["max"] = new RdbValue.Integer(long.MaxValue),
+    ["float"] = new RdbValue.Float(1.25),
+    ["name"] = new RdbValue.Text("Roma 🏛")
+});
+Check(RystemRdbCodec.Encode(RystemRdbCodec.Decode(RystemRdbCodec.Encode(floatDoc)))
+    .AsSpan().SequenceEqual(RystemRdbCodec.Encode(floatDoc)), "C# typed roundtrip failed");
+try { RystemRdbCodec.Encode(new RdbValue.Float(double.NaN)); throw new Exception("NaN accepted"); }
+catch (ArgumentException) { /* expected */ }
+try { RystemRdbCodec.Encode(new RdbValue.Reference("","id")); throw new Exception("Empty reference accepted"); }
+catch (ArgumentException) { /* expected */ }
+for(int n=0;n<goldenTyped.Length;n++)
+{
+    try { RystemRdbCodec.Decode(goldenTyped.AsSpan(0,n)); throw new Exception($"Truncated RDB accepted at {n}"); }
+    catch (ArgumentException) { /* expected */ }
+}
+try { RystemRdbCodec.Decode(goldenTyped.Concat(new byte[]{0}).ToArray()); throw new Exception("Trailing bytes accepted"); }
+catch (ArgumentException) { /* expected */ }
+var unknownTag = new byte[]{82,68,66,0,1,255};
+try { RystemRdbCodec.Decode(unknownTag); throw new Exception("Unknown type tag accepted"); }
+catch (ArgumentException) { /* expected */ }
+var duplicateFields = Convert.FromHexString("52444200010800000002000000017800000000017802");
+try { RystemRdbCodec.Decode(duplicateFields); throw new Exception("Duplicate keys accepted"); }
+catch (ArgumentException) { /* expected */ }
+Console.WriteLine("Rystem .NET typed RDB v1 conformance: PASS");
