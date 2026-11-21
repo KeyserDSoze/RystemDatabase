@@ -99,6 +99,7 @@ impl DocumentStore {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false) // retain the inode: unlinking/truncating a lockfile is unsafe
             .open(root.join("rystemdb.writer.lock"))?;
         match writer_lock.try_lock() {
             Ok(()) => {}
