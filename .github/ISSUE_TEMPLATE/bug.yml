@@ -1,0 +1,23 @@
+name: Bug
+description: Regression with a failing reproduction test
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Actual and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: RED regression test and reproduction
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Logs and environment (remove secrets)
+    validations:
+      required: false

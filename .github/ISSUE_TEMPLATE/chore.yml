@@ -1,0 +1,16 @@
+name: Engineering task
+description: Maintenance, architecture, security or release task
+title: "[chore] "
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Scope and rationale
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification and completion criteria
+    validations:
+      required: true

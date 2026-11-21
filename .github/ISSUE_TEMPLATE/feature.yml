@@ -1,0 +1,26 @@
+name: Feature
+description: New functionality with acceptance tests
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: Describe the observable user behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: red
+    attributes:
+      label: RED tests
+      description: Which tests must fail before implementation?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: GREEN acceptance criteria
+      description: What constitutes done and what regressions are covered?
+    validations:
+      required: true

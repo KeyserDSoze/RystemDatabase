@@ -1,0 +1,144 @@
+name: Native and container release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --workspace --locked --all-targets
+      - run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+        working-directory: npm/cli
+      - name: Ensure release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="$(node -p "require('./npm/cli/package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$version"
+  binaries:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: rystemdb-linux-x64
+            ext: ''
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: rystemdb-linux-arm64
+            ext: ''
+          - os: macos-15
+            target: x86_64-apple-darwin
+            asset: rystemdb-darwin-x64
+            ext: ''
+          - os: macos-15
+            target: aarch64-apple-darwin
+            asset: rystemdb-darwin-arm64
+            ext: ''
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: rystemdb-windows-x64.exe
+            ext: '.exe'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare target
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+      - name: Run tests for native targets
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: cargo test --workspace --locked --target ${{ matrix.target }}
+      - name: Build native executable
+        shell: bash
+        run: |
+          cargo build --release --locked -p rystemdb-cli --target ${{ matrix.target }}
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/rystemdb${{ matrix.ext }}" "dist/${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: dist
+          merge-multiple: true
+      - name: Generate release checksums
+        run: |
+          cd dist
+          sha256sum rystemdb-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --prerelease
+          fi
+  npm-publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: github-release
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+      - name: npm tests
+        run: npm test
+        working-directory: npm/cli
+      - name: Publish npm package if token configured and name reserved
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+        working-directory: npm/cli
+      - name: Explain missing npm credentials
+        if: env.NPM_TOKEN == ''
+        run: echo "Skipped npm publish; configure NPM_TOKEN and verify ownership of the rystemdb npm name."
+  container:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ghcr.io/keysersdoze/rystemdatabase:${{ github.ref_name }}

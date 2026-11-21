@@ -1,0 +1,48 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust test + lint (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust version
+        run: rustc --version
+      - name: Check workspace and unit/integration tests
+        run: cargo test --workspace --locked --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      - name: Release build
+        run: cargo build --release --locked -p rystemdb-cli
+  npm:
+    name: npm wrapper contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+        working-directory: npm/cli
+      - name: Validate npm package
+        run: npm pack --dry-run
+        working-directory: npm/cli
+  docker:
+    name: Docker build + basic smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f docker/Dockerfile -t rystemdb:ci .
+      - name: Verify container executable
+        run: docker run --rm rystemdb:ci --version
