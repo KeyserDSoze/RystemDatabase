@@ -69,3 +69,13 @@ dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemData
 ```
 
 The C#/TypeScript RDB codecs can **encode and decode** nested binary objects but are not network database clients. [RDB_TYPED_PROTOCOL.md](RDB_TYPED_PROTOCOL.md) documents type mapping and binary compatibility. TDD race/UTF-8 defect #44 requires preserving the U+FEFF scalar.
+
+## Real .NET and TypeScript localhost RPC client tests (on main)
+
+```sh
+cargo build --locked -p rystemdb-cli
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- target/debug/rystemdb
+RYSTEMDB_BINARY="$(pwd)/target/debug/rystemdb" bash -c 'cd src/libraries/typescript/rystemdb-client && npm test'
+```
+
+These spawn a real native `rpc-serve --listen 127.0.0.1:0` subprocess, test typed HELLO/PING/CRUD, concurrent requests and restart recovery. Neither client permits non-loopback connections; these are **not** secure remote SDKs. See [LOCAL_CLIENTS.md](LOCAL_CLIENTS.md).

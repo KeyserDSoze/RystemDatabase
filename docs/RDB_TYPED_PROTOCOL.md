@@ -69,6 +69,6 @@ The literal is asserted independently in `src/rystemdb-core/tests/rdb_compat.rs`
 
 ## Next end-to-end gates
 
-The native Rust `LocalClient` and loopback `rpc-serve` communicate using this typed codec. The .NET/TS libraries now **encode and decode** the native bytes independently, but still need real socket clients and live PUT/GET/DELETE against the Rust process (#27/#28/#43), followed by authenticated TLS network transport (#39) before any external server.
+The native Rust `LocalClient` and loopback `rpc-serve` communicate using this typed codec. The .NET/TS libraries now **encode/decode** the native bytes **and connect over localhost TCP** to the actual Rust `rpc-serve` process with HELLO/PING/PUT/GET/DELETE and persistence checks ([LOCAL_CLIENTS.md](LOCAL_CLIENTS.md), #45/#46). They still require authenticated TLS networking, production resources, cross-platform client package smoke and full version-negotiated protocol tests (#39/#43/#27/#28) before any external server.
 
 See [RSWP frame](WIRE_PROTOCOL.md), [CRUD key prefix](CRUD_KEY_PROTOCOL.md), [local RPC server](RPC_SERVER.md) and [ADR 0010](../adr/0010-typed-rdb-cross-language.md).

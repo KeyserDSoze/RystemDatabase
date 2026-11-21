@@ -1,15 +1,32 @@
-# @rystemdb/client (TypeScript / Node.js)
+# @rystemdb/client (TypeScript / Node.js 22+, experimental localhost-only SDK)
 
-[TypeScript SDK Issue #28](https://github.com/KeyserDSoze/RystemDatabase/issues/28).
+Features completed on source main:
+- \`src/wire.ts\`: strict RSWP v1 24-byte binary framing, unsigned u64 BigInt correlation IDs, bounded 16 MiB payloads.
+- \`src/crud.ts\` and \`src/rdb.ts\`: strict binary CRUD key and typed nested RDB values, signed i64 BigInt, raw Uint8Array, Map objects, references, arrays/null, UTF-8 golden vectors shared with Rust/.NET.
+- **\`src/client.ts\`: \`RystemLocalClient.connect("127.0.0.1", port)\`** opens a real TCP socket, negotiates HELLO v1.0, and provides async \`ping/put/get/delete/close\`. Concurrent requests correlate via request IDs, the socket parser handles TCP segmentation/coalescing and enforces frame/pending bounds. There is no JSON wire conversion.
+- Node's native \`Buffer\` is canonicalized to plain \`Uint8Array\` in decoded wire payload and typed byte fields (TDD regression #47).
+- Real-process CI compiles the Rust server and checks nested binary CRUD, Unicode ID, concurrent requests, missing/deleted documents and persistence across server restart.
 
-**Implemented:** TypeScript `src/wire.ts` RSWP v1 frame `encode/decode` with exact 64-bit `bigint` correlation IDs, bounded binary bodies, version/status/length checks and Rust PING golden vector tests. Test with Node.js 22+:
+\`\`\`sh
+cargo build --locked -p rystemdb-cli
+RYSTEMDB_BINARY="$(pwd)/target/debug/rystemdb" bash -c \
+  'cd src/libraries/typescript/rystemdb-client && npm test'
+\`\`\`
 
-```sh
-npm test
-```
+Example:
 
-**Not implemented:** an operational TCP/TLS database client, session pooling, cancellation, typed CRUD, cluster routing, browser support or published npm SDK. This SDK is independent of the `npm/cli` launcher package. Do not advertise it as a working remote client before server #25 and end-to-end tests.
+\`\`\`typescript
+import { RystemLocalClient } from "./src/client.ts";
+const db = await RystemLocalClient.connect("127.0.0.1", 8790);
+try {
+  await db.ping();
+  await db.put("users", "u42", new Map([["name", "Ada"], ["age", 34n]]));
+  console.log(await db.get("users", "u42"));
+} finally {
+  await db.close();
+}
+\`\`\`
 
-## Binary CRUD key codec (source only)
+**Important limitations:** localhost-only plaintext (TLS/auth not yet implemented), no user-provided AbortSignal, connection pools, browser transport, shard routing, automatic idempotent retry, official npm SDK publication, or production resource management. The separate \`npm/cli\` is a native binary installer wrapper and NOT this SDK. Failed writes may have uncertain commit outcomes. Parent [#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28) remains OPEN; scoped live-connection [#46](https://github.com/KeyserDSoze/RystemDatabase/issues/46).
 
-`encodeCrudKey/decodeCrudKey` in `src/crud.ts` use strict UTF-8 and exact big-endian lengths, reject malformed/truncated data and isolated UTF-16 surrogates, and preserve opaque RDB PUT bytes. `npm test` exercises the same golden vectors as Rust and C#. The separate `src/rdb.ts` now provides `encodeRdb/decodeRdb` for nested typed values; i64 uses `bigint`, bytes `Uint8Array`, native references `RdbReference`, objects `Map`, and null remains distinct from missing. Exact Rust/C# golden bytes and UTF-8/invalid input are tested. **No TCP/TLS connection yet** (#43/#28).
+[Local usage](../../../../docs/LOCAL_CLIENTS.md) | [Typed value format](../../../../docs/RDB_TYPED_PROTOCOL.md)

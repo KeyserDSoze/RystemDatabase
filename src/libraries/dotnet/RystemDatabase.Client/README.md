@@ -1,19 +1,30 @@
-# RystemDatabase.Client (.NET 10)
+# RystemDatabase.Client (.NET 10, experimental localhost-only SDK)
 
-[C# SDK Issue #27](https://github.com/KeyserDSoze/RystemDatabase/issues/27).
+Features completed on source main:
+- \`RystemWireCodec\`, \`RystemCrudKey\`, \`RystemRdbCodec\`: exact RSWP v1 binary framing, collection/ID keys and nested typed RDB document values, matching Rust and TypeScript byte-for-byte.
+- **\`RystemLoopbackClient\`**: async single persistent TCP connection to the real Rust \`rpc-serve\` process; RSWP v1 HELLO, PING, typed PUT/GET/DELETE, 3-second deadline, cancellation, bounded response payload, response correlation and status checks.
+- \`IAsyncDisposable\`, serialized asynchronous calls with a semaphore, no JSON intermediates, distinct missing/DELETE semantics.
+- CI on Linux builds \`rystemdb\` in Rust and executes genuine .NET subprocess interoperability tests with nested typed values, UTF-8 IDs, same-connection concurrent operations, deletion, and actual server restart.
 
-**Implemented:** standalone `RystemWireCodec` with RSWP v1 24-byte header, big-endian IDs/lengths, binary payloads, input-size bounds and request/response status checks. The `RystemDatabase.Client.Tests` independent executable verifies the Rust golden PING vector, 64-bit IDs and truncated frames.
+\`\`\`sh
+cargo build --locked -p rystemdb-cli
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- target/debug/rystemdb
+\`\`\`
 
-**Not implemented:** an operational remote `RystemDbClient` connection, TCP/TLS/auth, request multiplexing, typed CRUD bodies, cluster discovery and NuGet publishing. These require server #25 and full conformance.
+Example:
 
-Build and conformance:
+\`\`\`csharp
+using RystemDatabase.Client;
+using System.Net;
+await using var db = await RystemLoopbackClient.ConnectAsync(IPAddress.Loopback, 8790);
+await db.PingAsync();
+var value = new RdbValue.Object(new Dictionary<string,RdbValue> {
+    ["name"] = new RdbValue.Text("Ada")
+});
+await db.PutAsync("users", "u42", value);
+var found = await db.GetAsync("users", "u42");
+\`\`\`
 
-```sh
-dotnet run --project ../RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
-```
+**Important limitations:** this is a source-only localhost TCP client without TLS/authentication, pooling, multiplexing, query API, idempotent retry guarantees, shard routing, NuGet package publication or EF Core provider. Invalid/outside-loopback address rejected before connect; network failure on a write can mean an uncertain commit and is never automatically retried. Parent [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27) remains OPEN; scoped live-connection [#45](https://github.com/KeyserDSoze/RystemDatabase/issues/45).
 
-The EF Core integration is a separate project (#29), not part of this wire codec.
-
-## Binary CRUD key codec (source only)
-
-`RystemCrudKey.Encode/Decode` implements the RSWP v1 BE length-prefixed collection/UTF-8 ID and preserves any opaque RDB binary suffix. Independent .NET conformance tests assert Rust/TypeScript golden bytes and reject invalid UTF-8, truncated names, controls and excessive key sizes. The separate `RystemRdbCodec.Encode/Decode` now handles complete nested native RDB v1 binary values including signed long, byte[], reference, arrays, null and UTF-8 maps. The codec is independently tested against Rust/TypeScript golden bytes and rejects malformed input; **there is still no network connection** (#43/#27).
+[Local usage](../../../../docs/LOCAL_CLIENTS.md) | [Typed value format](../../../../docs/RDB_TYPED_PROTOCOL.md)

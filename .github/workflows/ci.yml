@@ -30,7 +30,7 @@ jobs:
       - name: Release build
         run: cargo build --release --locked -p rystemdb-cli
   npm:
-    name: npm wrapper contract tests
+    name: npm installer + TypeScript live RPC
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
         run: npm pack --dry-run
         working-directory: npm/cli
   dotnet:
-    name: .NET RSWP conformance (SDK + EF scaffold)
+    name: .NET typed SDK + live Rust RPC
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
