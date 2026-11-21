@@ -7,7 +7,6 @@
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
 use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
 use rystemdb_storage::DocumentStore;
-use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -101,9 +100,7 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>) {
             break;
         }
         let (status, payload, close) = if !greeted {
-            if request.operation != Operation::Hello {
-                (BAD_REQUEST, Vec::new(), true)
-            } else if request.payload != [1, 0] {
+            if request.operation != Operation::Hello || request.payload != [1, 0] {
                 (BAD_REQUEST, Vec::new(), true)
             } else {
                 greeted = true;
