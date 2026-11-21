@@ -140,7 +140,7 @@ fn handle_client_frames<S: Read + Write>(
     let mut greeted = false;
     let mut grants: Option<Vec<Grant>> = None;
     for _ in 0..MAX_REQUESTS_PER_CONNECTION {
-        let request = match read_frame(&mut stream) {
+        let request = match read_frame(stream) {
             Ok(request) => request,
             Err(_) => break, // malformed/version-mismatched/partial/closed: fail closed
         };
@@ -176,7 +176,7 @@ fn handle_client_frames<S: Read + Write>(
         // Error bodies intentionally remain empty: don't disclose credentials,
         // paths, nested data or internal errors even on authorization failures.
         let response = Frame::response(request.operation, request.request_id, status, payload);
-        if write_frame(&mut stream, &response).is_err() { break; }
+        if write_frame(stream, &response).is_err() { break; }
         if close { break; }
     }
 }
