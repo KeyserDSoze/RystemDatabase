@@ -136,7 +136,9 @@ export function encodeRdb(value: RdbValue): Uint8Array {
 class Reader {
   private pos = 0;
   private readonly view: DataView;
-  constructor(private readonly bytes: Uint8Array) {
+  private readonly bytes: Uint8Array;
+  constructor(bytes: Uint8Array) {
+    this.bytes = bytes; // Node.js --experimental-strip-types requires erasable syntax.
     this.view = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
   }
   get remaining(): number { return this.bytes.length - this.pos; }
