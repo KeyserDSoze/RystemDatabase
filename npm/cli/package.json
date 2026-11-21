@@ -1,0 +1,20 @@
+{
+  "name": "rystemdb",
+  "version": "0.1.0",
+  "description": "Native Rystem Database installer and launcher for npx",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KeyserDSoze/RystemDatabase.git",
+    "directory": "npm/cli"
+  },
+  "bin": {
+    "rystemdb": "./bin/rystemdb.mjs"
+  },
+  "files": ["bin", "lib", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test ../../tests/npm/*.test.mjs"
+  }
+}
