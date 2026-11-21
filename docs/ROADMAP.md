@@ -45,6 +45,8 @@ GitHub Issues are the source of truth, not static checkboxes alone. [Browse open
 - [x] Create four `src/libraries` project folders: Rust, .NET, TypeScript and EF Core (#26–29)
 - [x] RSWP v1 fixed binary framing and Rust/.NET/TypeScript golden vector test infrastructure (#24/#27/#28, partial milestones)
 - [x] Experimental loopback-only RSWP native TCP binary CRUD server with bounded workers and TDD subprocess tests (#37)
+- [x] Synchronous Rust `LocalClient` proof-of-concept: real HELLO/PING/typed CRUD and loopback enforcement (#26, partial)
+- [ ] Rust SDK async pooling, cancellation/retry, secure transport and NuGet/TypeScript clients connected to live server (#26–28, #39)
 - [ ] Authenticated native RPC server, fully interoperable wire CRUD body schema, session pooling and complete SDK connections (#25–28, #38, #39)
 - [ ] Genuine EF Core provider semantics, LINQ translation, tracking and EF specification suite (#29)
 - [ ] Production TLS/cert validation, authn/authz, flow control, idempotency, version negotiation (#24/#25)

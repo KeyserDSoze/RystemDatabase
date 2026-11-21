@@ -50,6 +50,31 @@ Response:
 
 Error frames never include file paths, segment contents or exception messages. There is no idempotency guarantee: on a write-time disconnect, clients must assume the outcome is **uncertain**, not blindly retry a non-idempotent mutation.
 
+## Experimental Rust client connection
+
+The Rust workspace package `src/libraries/rust/rystemdb-client` now exports `LocalClient`, a **synchronous**, nonpooled TCP client. It automatically exchanges a HELLO frame and sends native binary documents. Its `connect` method refuses non-loopback addresses before opening a socket. This SDK is source-only on `main` until published and must not be represented as a remote secure client.
+
+```rust
+use rystemdb_client::LocalClient;
+use rystemdb_core::Value;
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = LocalClient::connect("127.0.0.1:8790".parse::<SocketAddr>()?)?;
+    client.ping()?;
+    let mut fields = BTreeMap::new();
+    fields.insert("name".into(), Value::String("Ada".into()));
+    client.put("users", "u42", &Value::Object(fields))?;
+    println!("{:?}", client.get("users", "u42")?);
+    Ok(())
+}
+```
+
+The client's request ID is incremented on the same open connection. It has 3-second I/O timeouts; an I/O error or unexpected response returns an explicit error. PUT/DELETE transport failures may leave the remote commit outcome *uncertain*, so retries cannot be assumed safe.
+
+The SDK connection is tested against a **real subprocess**, with nested typed documents, missing keys, DELETE tombstones, and rejection of external addresses in `src/rystemdb-cli/tests/rpc_rust_sdk.rs` (#26).
+
 ## Concurrency and limits
 
 The server owns **one** advisory-locked `DocumentStore` for its entire lifetime. Independent CLI/embedded processes cannot open the same data directory while it runs. All operations coordinate through an in-process mutex, with up to eight worker threads and 32 queued sockets. Connections have 3-second per-read/write timeouts and a 128-frame maximum. Excess queued sockets are dropped rather than spawning unlimited threads.
@@ -60,4 +85,4 @@ This is **single node / single writer**, not an MVCC or multi-instance cluster. 
 
 `src/rystemdb-cli/tests/rpc_server.rs` starts **real `rystemdb rpc-serve` subprocesses** on ephemeral `127.0.0.1` ports. It tests HELLO/PING/keepalive/request IDs, nested binary document PUT/GET/DELETE/restart, rejected malformed bodies and versions, cross-process writer exclusivity, concurrent TCP clients and rejection of non-loopback listeners.
 
-The initial RED commit and all relevant final GREEN CI runs are recorded in [#37](https://github.com/KeyserDSoze/RystemDatabase/issues/37). This validates a loopback RPC prototype, **not** an authenticated production server. See [#25](https://github.com/KeyserDSoze/RystemDatabase/issues/25), [#38](https://github.com/KeyserDSoze/RystemDatabase/issues/38), and [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) for follow-up gates.
+The Rust client is verified by a second RED→GREEN TDD cycle (#26). The initial server RED commit and all relevant final GREEN CI runs are recorded in [#37](https://github.com/KeyserDSoze/RystemDatabase/issues/37). This validates a loopback RPC prototype, **not** an authenticated production server. See [#25](https://github.com/KeyserDSoze/RystemDatabase/issues/25), [#38](https://github.com/KeyserDSoze/RystemDatabase/issues/38), and [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) for follow-up gates.

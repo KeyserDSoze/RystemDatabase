@@ -51,7 +51,7 @@ See [storage format, crash-recovery tests and limits](docs/STORAGE.md). Feature-
 
 ## Client libraries and distributed architecture (experimental)
 
-The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP v1 frame codecs with TDD conformance tests; **a localhost-only native RPC server exists on `main`, but there is no secure remote client connection or functioning EF Core provider yet**.
+The four SDK subprojects are under [`src/libraries/`](src/libraries/README.md): Rust, .NET 10, TypeScript and a separate EF Core provider project. Rust/.NET/TypeScript have byte-level RSWP v1 frame codecs with TDD conformance tests; **a localhost-only native RPC server and an experimental synchronous Rust `LocalClient` exist on `main`, but there is no secure remote client connection or functioning EF Core provider yet**.
 
 - [RSWP v1 binary protocol](docs/WIRE_PROTOCOL.md): 24-byte versioned envelope, 64-bit correlation ID and bounded payload. [Local TCP RPC prototype](docs/RPC_SERVER.md) on main (not in v0.1.2) uses binary document CRUD over loopback only.
 - [Distributed design](docs/DISTRIBUTED_ARCHITECTURE.md): shard routing/epochs, replicated WAL/quorum, regional asynchronous replication and failover proposals; **not implemented**.

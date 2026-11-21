@@ -4,7 +4,7 @@ Four project directories, all developed directly on `main`:
 
 | Library | Path | Stage | Issue |
 | --- | --- | --- | --- |
-| Rust | `rust/rystemdb-client` | Exposes tested RSWP frame codec; no live connection yet | #26 |
+| Rust | `rust/rystemdb-client` | Experimental **synchronous** `LocalClient` with HELLO/PING/typed CRUD over a real **loopback TCP** server, tested; no async/pool/TLS | #26 |
 | .NET | `dotnet/RystemDatabase.Client` | .NET 10 RSWP framing codec tested; no live connection yet | #27 |
 | TypeScript | `typescript/rystemdb-client` | Node.js 22+ TypeScript RSWP framing codec tested; no live connection yet | #28 |
 | EF Core | `dotnet/RystemDatabase.EntityFrameworkCore` | Buildable .NET project scaffold only, **not an EF Core provider** | #29 |
@@ -16,6 +16,6 @@ Conformance source/tests:
 - C#: `src/libraries/dotnet/RystemDatabase.Client.Tests/Program.cs`, run under the .NET 10 SDK
 - TypeScript: `src/libraries/typescript/rystemdb-client/tests/wire.test.mjs`, Node 22+
 
-The three codecs share a literal octet-level PING vector and reject unsupported versions/oversized or truncated frames. A codec is **not** a connection client. SDK lifecycle, pooling, timeouts, TLS, authentication and shard-aware routing are tracked in each issue.
+The three codecs share a literal octet-level PING vector and reject unsupported versions/oversized or truncated frames. The Rust SDK now includes a **real localhost-only synchronous connection**; the .NET/TypeScript SDKs remain framing codecs, not operational clients. Rust async pooling, authenticated TLS, cancellation and shard-aware routing are tracked in #26/#39.
 
 See [wire protocol](../../docs/WIRE_PROTOCOL.md), [ADR 0006](../../adr/0006-binary-rpc-clients-and-distribution.md) and [distributed design](../../docs/DISTRIBUTED_ARCHITECTURE.md). Do not publish client packages as operational until server+SDK end-to-end tests pass.

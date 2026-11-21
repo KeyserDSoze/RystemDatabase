@@ -50,3 +50,12 @@ cargo run -p rystemdb-cli -- rpc-serve --data ./data --listen 127.0.0.1:8790
 ```
 
 The server requires HELLO v1.0 and uses RSWP frames with typed binary RDB values, not JSON; see [RPC_SERVER.md](RPC_SERVER.md). Never bind a non-loopback address or tunnel the unauthenticated prototype remotely. Future TLS/auth is tracked in #39.
+
+## Rust RPC client TDD (source on main)
+
+```sh
+cargo test -p rystemdb-cli --locked --test rpc_rust_sdk
+cargo test -p rystemdb-client --locked --all-targets
+```
+
+The Rust `LocalClient` is synchronous and loopback-only, **not** an authenticated remote or distributed client. See [RPC_SERVER.md](RPC_SERVER.md) and #26.
