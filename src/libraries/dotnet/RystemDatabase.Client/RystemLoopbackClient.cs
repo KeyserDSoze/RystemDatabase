@@ -129,14 +129,17 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         var options = new SslClientAuthenticationOptions
         {
             TargetHost = serverName,
-            // macOS native SslStream on current runners rejects the explicit
-            // TLS1.3-only mask during context creation. On macOS allow native
-            // protocol offers, but below REQUIRE negotiated TLS1.3 before any
-            // HELLO/token is sent. Rust server itself offers TLS1.3 only.
-            EnabledSslProtocols = OperatingSystem.IsMacOS() ? SslProtocols.None : SslProtocols.Tls13,
+            // .NET 10 on macOS requires Network.framework (rather than the
+            // legacy SecureTransport stack) for TLS1.3-only connections.
+            EnabledSslProtocols = SslProtocols.Tls13,
             CertificateChainPolicy = chainPolicy,
             AllowRenegotiation = false
         };
+        // .NET 10 requires an explicit opt-in to Network.framework to support
+        // client TLS1.3 on macOS. Set before creating SslStream; applications
+        // with earlier SslStream use should additionally opt in at startup.
+        if (OperatingSystem.IsMacOS())
+            AppContext.SetSwitch("System.Net.Security.UseNetworkFramework", true);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(DefaultTimeout);
         var tcp = new TcpClient(address.AddressFamily) { NoDelay = true };
