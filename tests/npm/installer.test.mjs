@@ -24,5 +24,5 @@ test('TDD: checksum lookup requires an exact asset name', () => {
 test('TDD: wrapper can show its platform without a release or network', () => {
   const script = fileURLToPath(new URL('../../npm/cli/bin/rystemdb.mjs', import.meta.url));
   const output = execFileSync(process.execPath, [script, '--wrapper-info'], { encoding: 'utf8' });
-  assert.match(output, /rystemdb npm launcher 0\.1\.0/);
+  assert.match(output, /rystemdb npm launcher 0\.1\.1/);
 });

@@ -11,7 +11,7 @@ bash ./install.sh
 rystemdb --version
 ```
 
-Use `RYSTEMDB_VERSION=v0.1.0` to select a specific published version, `RYSTEMDB_INSTALL_DIR` to change the destination. Installer checks SHA-256 and puts the binary in `~/.local/bin` by default; add that folder to PATH.
+Use `RYSTEMDB_VERSION=v0.1.1` to select a specific published version, `RYSTEMDB_INSTALL_DIR` to change the destination. Installer checks SHA-256 and puts the binary in `~/.local/bin` by default; add that folder to PATH.
 
 ## Windows (PowerShell)
 
@@ -21,7 +21,7 @@ powershell -NoProfile -File .\install-rystemdb.ps1
 rystemdb --version
 ```
 
-The user PATH is updated for subsequent terminals. For a pinned release pass `-Version v0.1.0`.
+The user PATH is updated for subsequent terminals. For a pinned release pass `-Version v0.1.1`.
 
 ## npm / npx
 
@@ -39,6 +39,6 @@ Node.js 20+ required. The npm wrapper downloads a version-matched native release
 docker compose -f docker/compose.yml up --build
 ```
 
-Published images (after version-tag workflow): `ghcr.io/keysersdoze/rystemdatabase:v0.1.0`.
+Published images (after version-tag workflow): `ghcr.io/keyserdsoze/rystemdatabase:v0.1.1`.
 
 Current CLI only exposes health endpoints; it **does not persist data** and is not a production service. The Docker image does not have a persistent data volume for this reason.

@@ -11,8 +11,9 @@ if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
     throw "Native Windows ARM64 is not published yet."
 }
 if ($Version -eq "latest") {
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest"
-    $Version = $release.tag_name
+    $releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=1")
+    if ($releases.Count -eq 0) { throw "No published GitHub releases" }
+    $Version = $releases[0].tag_name
 }
 if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$') { throw "Invalid release version" }
 $asset = "rystemdb-windows-x64.exe"

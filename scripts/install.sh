@@ -16,7 +16,7 @@ case "$(uname -m)" in
 esac
 asset="rystemdb-$os-$arch"
 if [[ "$VERSION" == "latest" ]]; then
-  VERSION="$(curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: rystemdb-installer' "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+  VERSION="$(curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: rystemdb-installer' "https://api.github.com/repos/$REPO/releases?per_page=1" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
 fi
 if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
   echo "Invalid or missing release version: $VERSION" >&2; exit 1

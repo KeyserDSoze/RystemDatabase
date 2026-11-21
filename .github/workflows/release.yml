@@ -166,4 +166,4 @@ jobs:
           context: .
           file: docker/Dockerfile
           push: true
-          tags: ghcr.io/keysersdoze/rystemdatabase:${{ needs.prepare.outputs.tag }}
+          tags: ghcr.io/keyserdsoze/rystemdatabase:${{ needs.prepare.outputs.tag }}
