@@ -124,7 +124,7 @@ fn tdd_denied_tls_hello_stays_a_complete_status_six_before_teardown() {
             server.address, "localhost", &f.ca, &[0; 32]
         );
         assert!(matches!(rejected, Err(ClientError::Rejected(6))),
-            "denial at attempt {attempt} must be RSWP status 6: {rejected:?}");
+            "denial at attempt {attempt} must be RSWP status 6, never EOF");
     }
     let mut allowed = LocalClient::connect_tls(
         server.address, "localhost", &f.ca, &READ_WRITE_TOKEN
