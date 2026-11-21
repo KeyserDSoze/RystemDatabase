@@ -350,3 +350,21 @@ fn tdd_repeated_competing_open_and_reopen_never_sticks() {
         drop(second);
     }
 }
+
+
+#[test]
+fn tdd_repeated_synced_writes_immediately_reopen_without_stale_lock() {
+    let tmp = TempDir::new();
+    for iteration in 0_i64..40 {
+        let mut store = DocumentStore::open(tmp.path()).unwrap_or_else(|error| {
+            panic!("open before synced write {iteration} failed: {error:?}");
+        });
+        store.put("latest", &Value::Integer(iteration)).unwrap();
+        drop(store);
+        let reopened = DocumentStore::open(tmp.path()).unwrap_or_else(|error| {
+            panic!("immediate reopen after synced write {iteration} failed: {error:?}");
+        });
+        assert_eq!(reopened.get("latest").unwrap(), Some(Value::Integer(iteration)));
+        drop(reopened);
+    }
+}
