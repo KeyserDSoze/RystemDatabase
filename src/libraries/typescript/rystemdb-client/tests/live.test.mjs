@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -71,6 +71,16 @@ test("TDD RED: Node real Rust process HELLO PING nested PUT GET DELETE and resta
         const doc=nestedDoc();
         await client.put("orders","🦊",doc);
         await client.put("orders","\uFEFFid",doc);
+        // A real second native CLI process must not bypass the RPC owner's
+        // exclusive on-disk writer lock (Linux/macOS/Windows).
+        const contender = spawnSync(binary,[
+          "document","delete","--data",root,
+          "--collection","orders","--id","🦊"
+        ],{timeout:15000,encoding:"utf8"});
+        assert.equal(contender.error,undefined,
+          "Failed spawning competing writer process: "+contender.error);
+        assert.notEqual(contender.status,0,
+          "RPC server must prevent a separate native CLI writer");
         assert.deepEqual(await client.get("orders","🦊"),doc);
         assert.equal(await client.get("orders","absent"),null);
         await Promise.all(Array.from({length:8},async (_,n)=>{

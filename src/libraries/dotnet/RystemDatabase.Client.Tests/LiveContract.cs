@@ -27,6 +27,30 @@ internal static class LiveContract
                 await client.PutAsync("orders", "🦊", doc);
                 await client.PutAsync("orders", "\uFEFFid", doc);
 
+                // The RPC process owns the one on-disk writer for its lifetime.
+                // A separate native CLI writer must fail on every supported OS.
+                var competing = new ProcessStartInfo(binary)
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                competing.ArgumentList.Add("document");
+                competing.ArgumentList.Add("delete");
+                competing.ArgumentList.Add("--data");
+                competing.ArgumentList.Add(data);
+                competing.ArgumentList.Add("--collection");
+                competing.ArgumentList.Add("orders");
+                competing.ArgumentList.Add("--id");
+                competing.ArgumentList.Add("🦊");
+                using (var contender = Process.Start(competing) ??
+                    throw new Exception("Cannot spawn competing native writer"))
+                {
+                    await contender.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+                    Check(contender.ExitCode != 0,
+                        "RPC server writer lock allowed a second process to mutate storage");
+                }
+
                 var got = await client.GetAsync("orders", "🦊");
                 Check(got is not null &&
                     RystemRdbCodec.Encode(got).AsSpan().SequenceEqual(RystemRdbCodec.Encode(doc)),
