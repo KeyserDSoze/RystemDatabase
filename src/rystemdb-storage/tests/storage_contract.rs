@@ -334,6 +334,60 @@ fn tdd_writer_lock_is_per_directory_and_file_is_not_deleted_on_exit() {
 }
 
 
+// Child entrypoint: a separate process must acquire the writer lock immediately
+// after the original holder exits, even when another process previously failed
+// try_lock. The child verifies both lock ownership and replay of synced data.
+#[test]
+fn tdd_lock_recovery_child_probe() {
+    if let Some(path) = std::env::var_os("RYSTEMDB_LOCK_RECOVERY_PROBE_DIR") {
+        let pass: i64 = std::env::var("RYSTEMDB_LOCK_RECOVERY_PASS")
+            .unwrap().parse().unwrap();
+        let mut store = DocumentStore::open(PathBuf::from(path))
+            .unwrap_or_else(|err| panic!("fresh process could not recover writer lock at pass {pass}: {err:?}"));
+        assert_eq!(store.get("sentinel").unwrap(), Some(Value::Integer(pass)));
+        store.put("child-confirmation", &Value::Integer(pass)).unwrap();
+    }
+}
+
+// Regression for #19: repeated failed cross-process lock attempts must not
+// poison ownership or storage replay. No sleep, retry, or ignored error masks
+// a stale advisory lock. This complements the 50 same-process and 40 synced
+// write/reopen cycles above/below and runs on Linux, macOS and Windows.
+#[test]
+fn tdd_lock_reopens_across_processes_after_competing_probe() {
+    let tmp = TempDir::new();
+    let test_binary = std::env::current_exe().unwrap();
+    for pass in 0_i64..12 {
+        let mut writer = DocumentStore::open(tmp.path())
+            .unwrap_or_else(|err| panic!("original writer failed at pass {pass}: {err:?}"));
+        writer.put("sentinel", &Value::Integer(pass)).unwrap();
+
+        let competitor = std::process::Command::new(&test_binary)
+            .args(["--exact", "tdd_exclusive_lock_child_probe", "--nocapture"])
+            .env("RYSTEMDB_LOCK_PROBE_DIR", tmp.path())
+            .output().unwrap();
+        assert!(competitor.status.success(),
+            "competing writer not rejected at pass {pass}: stdout={} stderr={}",
+            String::from_utf8_lossy(&competitor.stdout),
+            String::from_utf8_lossy(&competitor.stderr));
+
+        drop(writer);
+        let recovery = std::process::Command::new(&test_binary)
+            .args(["--exact", "tdd_lock_recovery_child_probe", "--nocapture"])
+            .env("RYSTEMDB_LOCK_RECOVERY_PROBE_DIR", tmp.path())
+            .env("RYSTEMDB_LOCK_RECOVERY_PASS", pass.to_string())
+            .output().unwrap();
+        assert!(recovery.status.success(),
+            "new process could not reopen after contention at pass {pass}: stdout={} stderr={}",
+            String::from_utf8_lossy(&recovery.stdout),
+            String::from_utf8_lossy(&recovery.stderr));
+
+        let inspect = DocumentStore::open(tmp.path())
+            .unwrap_or_else(|err| panic!("parent could not reopen at pass {pass}: {err:?}"));
+        assert_eq!(inspect.get("child-confirmation").unwrap(), Some(Value::Integer(pass)));
+    }
+}
+
 #[test]
 fn tdd_repeated_competing_open_and_reopen_never_sticks() {
     let tmp = TempDir::new();
