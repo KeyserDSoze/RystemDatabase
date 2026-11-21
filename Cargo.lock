@@ -12,3 +12,10 @@ dependencies = [
 [[package]]
 name = "rystemdb-core"
 version = "0.1.1"
+
+[[package]]
+name = "rystemdb-storage"
+version = "0.1.1"
+dependencies = [
+ "rystemdb-core",
+]
