@@ -114,6 +114,25 @@ fn tdd_tls_rejects_wrong_trust_anchor_and_hostname_without_fallback() {
 }
 
 #[test]
+fn tdd_denied_tls_hello_stays_a_complete_status_six_before_teardown() {
+    let f = Fixture::new();
+    let server = f.start();
+    // Repeated fresh TLS sessions catch response-vs-FIN teardown races.
+    // Never reinterpret EOF or a transport timeout as an RSWP denial.
+    for attempt in 0..16 {
+        let rejected = LocalClient::connect_tls(
+            server.address, "localhost", &f.ca, &[0; 32]
+        );
+        assert!(matches!(rejected, Err(ClientError::Rejected(6))),
+            "denial at attempt {attempt} must be RSWP status 6: {rejected:?}");
+    }
+    let mut allowed = LocalClient::connect_tls(
+        server.address, "localhost", &f.ca, &READ_WRITE_TOKEN
+    ).expect("denied connections must not starve authorized TLS clients");
+    allowed.ping().unwrap();
+}
+
+#[test]
 fn tdd_tls_flags_and_bad_key_fail_before_storage_is_created() {
     let f=Fixture::new();
     let cases: Vec<Vec<String>>=vec![

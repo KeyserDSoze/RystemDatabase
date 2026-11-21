@@ -139,7 +139,20 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
             return;
         };
         let mut wrapped = rustls::StreamOwned::new(conn, stream);
-        handle_client_frames(&mut wrapped, db, policy);
+        let closing_after_reply = handle_client_frames(&mut wrapped, db, policy);
+        if closing_after_reply {
+            // After an explicit rejection status has been flushed, let the
+            // peer consume it and close its side before sending our TLS
+            // close_notify and TCP FIN. Network.framework SslStream on macOS
+            // can otherwise report EOF instead of delivering the RSWP
+            // Unauthorized frame when the TLS peer closes immediately.
+            // Never process further requests from a rejected session. Bound
+            // this wait to prevent untrusted localhost clients parking a
+            // worker indefinitely; production rate limiting is still #39.
+            let _ = wrapped.sock.set_read_timeout(Some(Duration::from_millis(750)));
+            let mut discarded = [0u8; 1];
+            let _ = wrapped.read(&mut discarded);
+        }
         if !wrapped.conn.is_handshaking() {
             // Finish the TLS record layer with a proper close_notify alert.
             // An abrupt TCP EOF can cause native Network.framework SslStream
@@ -150,22 +163,24 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
             let _ = wrapped.flush();
         }
     } else {
-        handle_client_frames(&mut stream, db, policy);
+        let _ = handle_client_frames(&mut stream, db, policy);
     }
 }
 
+// Returns true only when an explicit final RSWP response requested teardown.
+// Invalid/truncated frames and I/O failures do not receive a grace period.
 fn handle_client_frames<S: Read + Write>(
     stream: &mut S, db: &Mutex<DocumentStore>, policy: Option<&AuthPolicy>
-) {
+) -> bool {
     let mut greeted = false;
     let mut grants: Option<Vec<Grant>> = None;
     for _ in 0..MAX_REQUESTS_PER_CONNECTION {
         let request = match read_frame(stream) {
             Ok(request) => request,
-            Err(_) => break, // malformed/version-mismatched/partial/closed: fail closed
+            Err(_) => return false, // malformed/version-mismatched/partial/closed: fail closed
         };
         if request.kind != Kind::Request {
-            break;
+            return false;
         }
         let (status, payload, close) = if !greeted {
             if request.operation != Operation::Hello {
@@ -196,14 +211,15 @@ fn handle_client_frames<S: Read + Write>(
         // Error bodies intentionally remain empty: don't disclose credentials,
         // paths, nested data or internal errors even on authorization failures.
         let response = Frame::response(request.operation, request.request_id, status, payload);
-        if write_frame(stream, &response).is_err() { break; }
+        if write_frame(stream, &response).is_err() { return false; }
         // rustls::StreamOwned (and native SslStream peers) may buffer encrypted
         // application records. Never close after an auth denial until status 6
         // has been flushed to the underlying transport. Also flush normal CRUD
         // replies before waiting for another request on persistent connections.
-        if stream.flush().is_err() { break; }
-        if close { break; }
+        if stream.flush().is_err() { return false; }
+        if close { return true; }
     }
+    false
 }
 
 fn handle_document(request: &Frame, db: &Mutex<DocumentStore>, grants: Option<&[Grant]>) -> (u16, Vec<u8>, bool) {

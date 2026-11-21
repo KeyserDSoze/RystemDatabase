@@ -147,3 +147,18 @@ requests or intersects it with HELLO bearer-token grants. These are remaining
 [#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) acceptance gates.
 No non-loopback listener or production remote access is enabled. The current
 policy parser does not enforce Windows NTFS access-control lists.
+
+## Denied TLS HELLO teardown regression (#54)
+
+A macOS .NET 10 Network.framework `SslStream` regression showed that sending
+a valid status-6 RSWP frame followed immediately by TLS `close_notify`/TCP
+FIN can sometimes be observed as EOF instead of an application response.
+The server explicitly flushes the RSWP frame and, on a *final response that
+requests session closure*, now **waits at most 750 ms for the peer to consume
+the response and close its side** before sending its TLS close notification.
+The waiting bytes are discarded, never parsed as a second request. Other
+session types and the plaintext local prototype retain their behavior.
+The bound limits resource occupancy by clients that never close; production
+rate limiting and security DoS review remain open under #39. The real-process
+Rust/.NET/Node rejection tests must observe actual RSWP status 6, never
+interpret EOF as a successful authorization denial.
