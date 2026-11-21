@@ -11,11 +11,11 @@ The native Rust RPC service and Rust/.NET/Node SDKs had real binary CRUD over lo
 ## Decision
 
 - Keep the non-loopback listener prohibition in all configurations; source-only localhost development mode is not remotely secure.
-- An explicit \`--auth-file PRIVATE_PATH\` enables a **deny-by-default** local session mode. Omit it to retain the existing backward-compatible anonymous localhost experimental mode.
-- File syntax: 64 lowercase hex characters (32-byte raw secret), exact ASCII collection name and \`r\`, \`w\` or \`rw\`; no wildcard, duplicate token/collection grant or implicit admin. Maximum 64 KiB and 128 grants. Fail closed for invalid/missing/oversized file **before binding or opening data**. Unix rejects symlinks, world/group permissions and file swaps detected by dev/inode checks. Windows NTFS ACL hardening is a distinct outstanding security gate.
-- HELLO v1.0 payload \`01 00 00 20 <32 raw token bytes>\` is required in auth mode; wrong/missing tokens return status \`6\` and close, no information-bearing error. Legacy \`01 00\` only works when auth mode is off.
-- Store session grants **per TCP connection**. Validate collection and operation at the dispatch boundary and deny without touching document storage. Reads require \`r\`, PUT/DELETE require \`w\`; forbidden and missing collections use the same status 6 regardless of existence.
-- Implement the matching HELLO form in local Rust \`LocalClient\`, .NET \`RystemLoopbackClient\` and Node \`RystemLocalClient\` without exposing tokens in argv, command logs or JSON. Preserve the earlier anonymous local APIs. Run native Rust subprocess and full client interop tests on Linux/macOS/Windows.
+- An explicit `--auth-file PRIVATE_PATH` enables a **deny-by-default** local session mode. Omit it to retain the existing backward-compatible anonymous localhost experimental mode.
+- File syntax: 64 lowercase hex characters (32-byte raw secret), exact ASCII collection name and `r`, `w` or `rw`; no wildcard, duplicate token/collection grant or implicit admin. Maximum 64 KiB and 128 grants. Fail closed for invalid/missing/oversized file **before binding or opening data**. Unix rejects symlinks, world/group permissions and file swaps detected by dev/inode checks. Windows NTFS ACL hardening is a distinct outstanding security gate.
+- HELLO v1.0 payload `01 00 00 20 <32 raw token bytes>` is required in auth mode; wrong/missing tokens return status `6` and close, no information-bearing error. Legacy `01 00` only works when auth mode is off.
+- Store session grants **per TCP connection**. Validate collection and operation at the dispatch boundary and deny without touching document storage. Reads require `r`, PUT/DELETE require `w`; forbidden and missing collections use the same status 6 regardless of existence.
+- Implement the matching HELLO form in local Rust `LocalClient`, .NET `RystemLoopbackClient` and Node `RystemLocalClient` without exposing tokens in argv, command logs or JSON. Preserve the earlier anonymous local APIs. Run native Rust subprocess and full client interop tests on Linux/macOS/Windows.
 - A fixed-work byte comparison avoids obvious early-exit token prefix matches. It is **not** audited cryptographic constant-time behavior.
 
 ## Limitations / threat model
