@@ -99,6 +99,12 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         }
     }
 
+    /// <summary>RED: verified TLS1.3 connection to the loopback Rust server.</summary>
+    public static Task<RystemLoopbackClient> ConnectTlsAsync(
+        IPAddress address, int port, string serverName, string trustedCaFile, byte[] token,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("TLS1.3 client not implemented");
+
     public async Task PingAsync(CancellationToken cancellationToken = default)
     {
         var reply = await CallAsync(WireOperation.Ping, [], cancellationToken).ConfigureAwait(false);

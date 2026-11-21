@@ -91,6 +91,13 @@ export class RystemLocalClient {
     }
   }
 
+  /** RED: certificate-verified TLS1.3 client implementation pending. */
+  static async connectTls(_options: {
+    host: string; port: number; serverName: string; ca: string | Uint8Array; token: Uint8Array
+  }): Promise<RystemLocalClient> {
+    throw new Error("TLS client not implemented");
+  }
+
   async ping(): Promise<void> {
     const frame = await this.request(2, new Uint8Array());
     this.expectStatus(frame, 0);
