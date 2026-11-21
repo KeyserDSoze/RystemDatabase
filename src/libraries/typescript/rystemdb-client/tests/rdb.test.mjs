@@ -70,3 +70,11 @@ test("TDD RED: typed RDB retains U+FEFF at start of object keys, values and refe
   assert.deepEqual(decodeRdb(encoded),data);
   assert.deepEqual(encodeRdb(decodeRdb(encoded)), encoded);
 });
+
+test("TDD RED: binary byte fields decoded from Node Socket Buffer are plain Uint8Array", () => {
+  const original = new Map([["binary", Uint8Array.from([0,255,128])]]);
+  const decoded = decodeRdb(Buffer.from(encodeRdb(original)));
+  assert.deepEqual(decoded, original);
+  assert.equal(Object.getPrototypeOf(decoded.get("binary")), Uint8Array.prototype,
+    "RDB byte fields must be plain Uint8Array, not Buffer");
+});

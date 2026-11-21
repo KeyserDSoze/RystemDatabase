@@ -42,3 +42,11 @@ test("TDD RED: request status must be success and response may report not-found"
     const response = { ...ping, kind: 2, operation: 17, status: 1, payload: Uint8Array.from([1]) };
     assert.deepEqual(decode(encode(response)), response);
 });
+
+test("TDD RED: decoding Node Buffer input always returns canonical Uint8Array wire payload", () => {
+  const raw = encode({ ...ping, operation: 16, payload: Uint8Array.from([0,255,128]) });
+  const reply = decode(Buffer.from(raw));
+  assert.deepEqual(reply.payload, Uint8Array.from([0,255,128]));
+  assert.equal(Object.getPrototypeOf(reply.payload), Uint8Array.prototype,
+    "Public SDK types must not leak Node Buffer subclasses");
+});
