@@ -40,7 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo test --workspace --locked --all-targets
-      - run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      - name: Run process-crash regression suite
+        run: cargo test -p rystemdb-storage --locked --features fault-injection --test crash_injection -- --test-threads=1
+      - run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
