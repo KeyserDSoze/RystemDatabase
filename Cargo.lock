@@ -36,6 +36,7 @@ dependencies = [
 name = "rystemdb-cli"
 version = "0.1.2"
 dependencies = [
+ "rystemdb-client",
  "rystemdb-core",
  "rystemdb-protocol",
  "rystemdb-storage",
@@ -50,6 +51,7 @@ version = "0.1.2"
 name = "rystemdb-client"
 version = "0.1.2"
 dependencies = [
+ "rystemdb-core",
  "rystemdb-protocol",
 ]
 

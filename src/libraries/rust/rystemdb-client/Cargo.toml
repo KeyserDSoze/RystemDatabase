@@ -12,3 +12,4 @@ path = "src/lib.rs"
 
 [dependencies]
 rystemdb-protocol = { path = "../../../rystemdb-protocol" }
+rystemdb-core = { path = "../../../rystemdb-core" }

@@ -16,3 +16,6 @@ rystemdb-core = { path = "../rystemdb-core" }
 rystemdb-storage = { path = "../rystemdb-storage" }
 rystemdb-protocol = { path = "../rystemdb-protocol" }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+
+[dev-dependencies]
+rystemdb-client = { path = "../libraries/rust/rystemdb-client" }
