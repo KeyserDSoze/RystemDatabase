@@ -15,7 +15,7 @@ Status: Accepted for experimental single-process storage — 2026-11-21
 
 ## Non-goals and risks
 
-- **No multiprocess file locking yet.** Only one caller/process may open for writing; concurrent process access is unsupported and can corrupt logical state.
+- **OS advisory single-writer lock is now required for open.** The lock file remains on disk by design; the OS lock is released after process exit, even if Rust destructors do not run. Uncooperative writers can still bypass the lock, and behavior on filesystems with weak locking is not certified.
 - The in-memory ID map is not a separately persisted transactional index; startup replay is O(number of frames).
 - There are no multi-document transactions, MVCC, guaranteed atomic compaction, document revisions, or foreign-key constraints.
 - No proof of Windows directory-entry persistence after power loss. A successful `sync_data` call is not the same as verified physical durability across all filesystems/hardware.

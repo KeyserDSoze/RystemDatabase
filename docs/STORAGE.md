@@ -39,7 +39,7 @@ Read/write/delete/rollover/restart, malformed input, corruption and truncated-ta
 
 ## Explicit limitations
 
-- **Single writer only, without OS-enforced locking yet.** Never open the same directory for mutation in two independent processes. Track as a safety follow-up before public data APIs.
+- **Advisory single-writer exclusion:** `rystemdb.writer.lock` is held with `File::try_lock` on the entire store lifetime, and released by the OS after normal or abrupt process exit. Two cooperative Rystem writers cannot open the same directory concurrently. Uncooperative tools or filesystems without reliable locks can still damage data.
 - Rebuild-from-log on every startup (not yet an index engine).
 - No MVCC, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
 - Operating-system and hardware flush semantics may differ. Power-loss tests and Windows directory durability remain necessary.

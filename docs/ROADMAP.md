@@ -13,7 +13,8 @@ All work is tracked by GitHub Issues, developed directly on main, with RED → G
 ## Storage (0.2.x)
 - [x] Experimental self-describing v1 on-disk framing, checksums and append-only segments (schema dictionary still pending)
 - [x] Rebuildable in-memory document ID → segment/offset lookup with restart replay, plus incomplete final tail truncation
-- [ ] Atomic indexing transactions, process-exit/power-loss crash fault injection, multi-process writer locking and compaction
+- [x] Cooperative cross-process single-writer lock with tests for abrupt process exit
+- [ ] Atomic indexing transactions, process-exit/power-loss fault injection across write phases and compaction
 - [x] Embedded source API: put/get/delete (overwrite via append) typed nested values; no network API yet
 
 ## Relations and query (0.3.x)

@@ -2,13 +2,13 @@
 
 **Hybrid document + relational + analytical database, built in Rust.**
 
-> **Status: experimental foundation.** A nested typed binary codec, an embedded append-only document segment library and a minimal health-only CLI exist. **The server does not expose storage**, and there are no transactional indexes, SQL, MVCC, enforced multi-process writer locks or production guarantees. `v0.1.1` binaries predate the storage implementation; no new release is implied by ongoing `main` development.
+> **Status: experimental foundation.** A nested typed binary codec, an embedded append-only document segment library and a minimal health-only CLI exist. **The server does not expose storage**, and there are no transactional indexes, SQL, MVCC or production guarantees. `v0.1.1` binaries predate the storage implementation; no new release is implied by ongoing `main` development.
 
 Rystem Database follows the top-level structure of [TemporalMark](https://github.com/KeyserDSoze/TemporalMark): `src/`, `tests/`, `docs/`, `adr/`, `scripts/`, `docker/`, `infra/`, `.github/`.
 
 ## Build and test
 
-Requirements: Rust 1.85.1+, Cargo. Node.js 20+ for launcher tests; Docker optional.
+Requirements: Rust 1.89.0+, Cargo. Node.js 20+ for launcher tests; Docker optional.
 
 ```sh
 cargo test --workspace --locked --all-targets
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [storage format and limits](docs/STORAGE.md). This is a **single-process experimental API**, without external writer protection, transactional multi-document updates or indexes beyond restart-rebuilt ID positions.
+See [storage format and limits](docs/STORAGE.md). This is a **single-process experimental API**, with an OS advisory single-writer lock, but without transactional multi-document updates or secondary indexes.
 
 ## Distribution
 

@@ -8,7 +8,7 @@
 use rystemdb_core::{decode, encode, CodecError, Value};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -27,6 +27,7 @@ pub enum StoreError {
     Codec(CodecError),
     InvalidId,
     InvalidSegmentLimit,
+    Locked,
     Corrupt(String),
     Poisoned,
 }
@@ -38,6 +39,7 @@ impl fmt::Display for StoreError {
             StoreError::Codec(err) => write!(f, "document codec error: {err}"),
             StoreError::InvalidId => write!(f, "document ID must be 1..=1024 UTF-8 bytes"),
             StoreError::InvalidSegmentLimit => write!(f, "segment limit must be at least 64 bytes"),
+            StoreError::Locked => write!(f, "database directory is already open for writing"),
             StoreError::Corrupt(message) => write!(f, "corrupt segment: {message}"),
             StoreError::Poisoned => write!(f, "store write failed; close and reopen to recover"),
         }
@@ -73,6 +75,8 @@ pub struct DocumentStore {
     segment_limit: u64,
     entries: BTreeMap<String, Location>,
     poisoned: bool,
+    // Last field drops last; the OS releases the advisory lock on process death.
+    _writer_lock: File,
 }
 
 impl DocumentStore {
@@ -88,6 +92,19 @@ impl DocumentStore {
         }
         let root = root.as_ref().to_path_buf();
         fs::create_dir_all(&root)?;
+        // Acquire before scanning/creating segments. A persistent lock *file* is
+        // intentional: the ownership is the OS advisory lock, not its existence.
+        // std::fs::File::try_lock requires Rust 1.89+.
+        let writer_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(root.join("rystemdb.writer.lock"))?;
+        match writer_lock.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Err(StoreError::Locked),
+            Err(TryLockError::Error(err)) => return Err(StoreError::Io(err)),
+        }
         let mut ids = Vec::new();
         for dir_entry in fs::read_dir(&root)? {
             let dir_entry = dir_entry?;
@@ -153,6 +170,7 @@ impl DocumentStore {
             .open(segment_path(&root, active_id))?;
         Ok(Self {
             root, active, active_id, segment_limit: limit, entries, poisoned: false,
+            _writer_lock: writer_lock,
         })
     }
 

@@ -6,7 +6,7 @@
 4. **REFACTOR:** clean up while preserving green tests. Update docs and the relevant ADR for nontrivial decisions.
 5. Only close the issue when the final main SHA is green on GitHub CI. The project has no PR-only branch workflow.
 
-Local requirements: Rust 1.85.1+, Cargo, Node.js 20+, optionally Docker.
+Local requirements: Rust 1.89.0+, Cargo, Node.js 20+, optionally Docker.
 
 ```sh
 cargo test --workspace --locked --all-targets
@@ -15,7 +15,7 @@ cd npm/cli && npm test
 docker build -f docker/Dockerfile -t rystemdb:local .
 ```
 
-Checks currently exercise the codec and CLI foundation only. The project now has experimental append-only persistent document segments and contract tests, but **no cross-process writer lock, transactional index, multi-document transaction or production-grade crash guarantees**; each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
+Checks currently exercise the codec and CLI foundation only. The project now has experimental append-only persistent document segments and contract tests, but **an advisory cross-process writer lock, but **no transactional index, multi-document transaction or production-grade crash/power-loss guarantees****; each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
 
 Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/release/rystemdb --help`. On Windows use `target\\release\\rystemdb.exe`.
 

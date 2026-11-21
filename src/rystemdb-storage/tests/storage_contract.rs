@@ -251,7 +251,8 @@ fn tdd_rejects_invalid_segment_config() {
 fn tdd_exclusive_lock_rejects_competing_writer_and_releases_on_drop() {
     let tmp = TempDir::new();
     let first = DocumentStore::open(tmp.path()).unwrap();
-    assert!(DocumentStore::open(tmp.path()).is_err(), "second writer must be rejected");
+    assert!(matches!(DocumentStore::open(tmp.path()), Err(StoreError::Locked)),
+        "second writer must be rejected as Locked");
     drop(first);
     assert!(DocumentStore::open(tmp.path()).is_ok(), "reopen must work after normal close");
 }
@@ -260,7 +261,7 @@ fn tdd_exclusive_lock_rejects_competing_writer_and_releases_on_drop() {
 #[test]
 fn tdd_exclusive_lock_child_probe() {
     if let Some(path) = std::env::var_os("RYSTEMDB_LOCK_PROBE_DIR") {
-        assert!(DocumentStore::open(PathBuf::from(path)).is_err(),
+        assert!(matches!(DocumentStore::open(PathBuf::from(path)), Err(StoreError::Locked)),
             "concurrent child process unexpectedly acquired writer lock");
     }
 }
@@ -310,7 +311,7 @@ fn tdd_crashed_lock_holder_does_not_leave_stale_ownership() {
     let competing = DocumentStore::open(tmp.path());
     child.kill().ok(); // forced process termination: no Rust Drop in child
     child.wait().unwrap();
-    assert!(competing.is_err(), "concurrent writer should not enter");
+    assert!(matches!(competing, Err(StoreError::Locked)), "concurrent writer should not enter");
     assert!(DocumentStore::open(tmp.path()).is_ok(),
         "OS must release the lock automatically on process death");
 }
