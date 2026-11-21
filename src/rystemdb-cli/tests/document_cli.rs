@@ -39,7 +39,13 @@ fn execute(mut cmd: Command, input: Option<&str>) -> Output {
     if let Some(input) = input {
         cmd.args(["--json", "-"]).stdin(Stdio::piped());
         let mut process = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        process.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        // Invalid-argument CLI processes can exit before consuming stdin.
+        // BrokenPipe is expected in that negative path; other I/O failures
+        // are still test errors. Assert the child exit code below as usual.
+        if let Err(error) = process.stdin.take().unwrap().write_all(input.as_bytes()) {
+            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe,
+                "unexpected stdin write error: {error}");
+        }
         process.wait_with_output().unwrap()
     } else {
         cmd.output().unwrap()
