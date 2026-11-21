@@ -4,22 +4,22 @@ This page describes the **source-only localhost TCP client milestone**, develope
 
 **Security warning:** the Rust RSWP RPC server does **not implement TLS, authentication, authorization, or public network policy**. It will only bind numeric loopback. All three SDKs reject non-loopback connection targets. Do not use port-forwarding or public reverse proxies to bypass that restriction. A production remote client requires [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
-**Release warning:** the current published native release \`v0.1.2\` predates this RPC server and these SDK connection implementations. Build \`rystemdb\` from main to run this example. None of the .NET/TypeScript client packages is published to NuGet/npm at this point; npm/cli is an independent native-binary launcher.
+**Release warning:** the current published native release `v0.1.2` predates this RPC server and these SDK connection implementations. Build `rystemdb` from main to run this example. None of the .NET/TypeScript client packages is published to NuGet/npm at this point; npm/cli is an independent native-binary launcher.
 
 ## Run a real Rust server
 
-\`\`\`sh
+```sh
 cargo build --locked -p rystemdb-cli
 ./target/debug/rystemdb rpc-serve --data ./rystem-data --listen 127.0.0.1:8790
-\`\`\`
+```
 
 The server owns the exclusive binary segment writer lock for its entire process lifetime; you cannot concurrently open a second local CLI writer on that directory.
 
 ## C#/.NET 10 (asynchronous, one persistent socket)
 
-Use the project in \`src/libraries/dotnet/RystemDatabase.Client\`, or add it as a project reference to your own solution.
+Use the project in `src/libraries/dotnet/RystemDatabase.Client`, or add it as a project reference to your own solution.
 
-\`\`\`csharp
+```csharp
 using System.Net;
 using RystemDatabase.Client;
 
@@ -34,17 +34,17 @@ var doc = new RdbValue.Object(new Dictionary<string, RdbValue> {
 await db.PutAsync("users", "u42", doc);
 RdbValue.Object? loaded = await db.GetAsync("users", "u42");
 bool deleted = await db.DeleteAsync("users", "u42");
-\`\`\`
+```
 
-\`ConnectAsync\` validates the numeric IP before socket creation and performs RSWP 1.0 HELLO. Async operations take optional \`CancellationToken\`, use 3-second per-call deadlines, validate the 24-byte frame and response ID/opcode, and serialize I/O through a semaphore. Cancellation or broken TCP cannot guarantee the outcome of a write; the connection closes rather than blindly replaying it. A missing GET becomes \`null\`, and a second DELETE yields \`false\`. Errors return explicit exceptions / \`RystemRpcException.Status\`.
+`ConnectAsync` validates the numeric IP before socket creation and performs RSWP 1.0 HELLO. Async operations take optional `CancellationToken`, use 3-second per-call deadlines, validate the 24-byte frame and response ID/opcode, and serialize I/O through a semaphore. Cancellation or broken TCP cannot guarantee the outcome of a write; the connection closes rather than blindly replaying it. A missing GET becomes `null`, and a second DELETE yields `false`. Errors return explicit exceptions / `RystemRpcException.Status`.
 
 **Not yet implemented**: TLS/auth, pooling, multiplexing, automatic safe idempotency/retries, query execution, shard-aware placement and NuGet distribution. Parent #27 remains open.
 
 ## TypeScript / Node.js 22+ (asynchronous, correlated concurrent requests)
 
-Use \`src/libraries/typescript/rystemdb-client/src/client.ts\` alongside the existing \`wire.ts\`, \`crud.ts\`, \`rdb.ts\` from this source tree.
+Use `src/libraries/typescript/rystemdb-client/src/client.ts` alongside the existing `wire.ts`, `crud.ts`, `rdb.ts` from this source tree.
 
-\`\`\`typescript
+```typescript
 import { RystemLocalClient } from "./src/client.ts";
 
 const db = await RystemLocalClient.connect("127.0.0.1", 8790);
@@ -61,24 +61,29 @@ try {
 } finally {
   await db.close();
 }
-\`\`\`
+```
 
-\`connect\` permits only numeric \`127.0.0.1\` and \`::1\` (no DNS). A native socket \`Buffer\` is normalized to **plain \`Uint8Array\`**, with independent golden tests plus a real-process regression for a Buffer subclass bug [#47](https://github.com/KeyserDSoze/RystemDatabase/issues/47). The socket parser handles TCP frame fragmentation, guards 16 MiB per message, and correlates concurrent requests by native BigInt u64 IDs. A bounded pending-request map and 3-second inactivity/request timers fail closed on lost connection. No automatic write retries or full streaming queries.
+`connect` permits only numeric `127.0.0.1` and `::1` (no DNS). A native socket `Buffer` is normalized to **plain `Uint8Array`**, with independent golden tests plus a real-process regression for a Buffer subclass bug [#47](https://github.com/KeyserDSoze/RystemDatabase/issues/47). The socket parser handles TCP frame fragmentation, guards 16 MiB per message, and correlates concurrent requests by native BigInt u64 IDs. A bounded pending-request map and 3-second inactivity/request timers fail closed on lost connection. No automatic write retries or full streaming queries.
 
 **Not yet implemented**: TLS, authentication, user-provided AbortSignal, connection pools/retry policy, browser support, NuGet/npm SDK release, sharding or geo-redundancy. Parent #28 remains open.
 
-## Real Rust-process CI verification
+## Real Rust-process CI verification (Linux, macOS, Windows)
 
-These are **not mock tests**: each live test launches the Rust CLI as an actual OS subprocess, uses \`--listen 127.0.0.1:0\` to atomically select a port inside the server, parses the flushed startup line, exercises HELLO/PING/native nested binary PUT/GET/DELETE and a true process restart, then closes all processes.
+These are **not mock tests**: each live test launches the Rust CLI as an actual OS subprocess, uses `--listen 127.0.0.1:0` to atomically select a port inside the server, parses the flushed startup line, exercises HELLO/PING/native nested binary PUT/GET/DELETE and a true process restart, then closes all processes.
 
-\`\`\`sh
+```sh
 cargo build --locked -p rystemdb-cli
+# On Windows pass target/debug/rystemdb.exe in the next command.
 dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- target/debug/rystemdb
 
 RYSTEMDB_BINARY="$(pwd)/target/debug/rystemdb" \
   bash -c 'cd src/libraries/typescript/rystemdb-client && npm test'
-\`\`\`
+```
 
-Both languages test multiple outstanding operations, i64 minimum, byte arrays with \`00 ff 80\`, native references, nested arrays, non-ASCII document IDs (including U+FEFF), tombstones, missing records, invalid keys and restart persistence. The CI \`dotnet\` and \`npm\` jobs now compile the actual native Rust server binary and run these live subprocess tests on Linux. Independent Rust native server/storage tests already run across Linux/Windows/macOS. Cross-OS *client-language* CI and release packaging are still future work.
+Both languages test multiple outstanding operations, i64 minimum, byte arrays with `00 ff 80`, native references, nested arrays, non-ASCII document IDs (including U+FEFF), tombstones, missing records, invalid keys and restart persistence. The CI `.NET` and `npm/TypeScript` jobs **each run on Linux, macOS and Windows**, compile the actual native Rust server on that same runner, and run the live client subprocess tests there. All these SDK tests also verify that a second native CLI process cannot bypass the server's exclusive storage writer lock. Windows CI explicitly launches `target/debug/rystemdb.exe`; no fake process or port reservation is used. Rust native server/storage tests run across the same three operating systems. **Client packages are not published and cross-OS CI must not be mistaken for installed package smoke tests.**
 
 See [RSWP framing](WIRE_PROTOCOL.md), [CRUD key spec](CRUD_KEY_PROTOCOL.md), [native RDB type spec](RDB_TYPED_PROTOCOL.md) and [security feature #39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+
+### CI and distribution boundaries
+
+[CI workflow](../.github/workflows/ci.yml) has separate `ubuntu-latest`, `macos-latest`, and `windows-latest` matrices for **Node 22** and **.NET 10**. All test real binary CRUD and cross-process writer locking with the executable built locally on the runner. [Issue #48](https://github.com/KeyserDSoze/RystemDatabase/issues/48) tracks this specific acceptance gate; [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27) and [#28](https://github.com/KeyserDSoze/RystemDatabase/issues/28) still track actual NuGet/npm SDK packaging and authenticated remote connectivity. Existing published `v0.1.2` contains no new RPC server; no SDK package was released by these CI changes.

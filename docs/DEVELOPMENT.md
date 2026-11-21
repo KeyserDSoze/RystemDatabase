@@ -79,3 +79,7 @@ RYSTEMDB_BINARY="$(pwd)/target/debug/rystemdb" bash -c 'cd src/libraries/typescr
 ```
 
 These spawn a real native `rpc-serve --listen 127.0.0.1:0` subprocess, test typed HELLO/PING/CRUD, concurrent requests and restart recovery. Neither client permits non-loopback connections; these are **not** secure remote SDKs. See [LOCAL_CLIENTS.md](LOCAL_CLIENTS.md).
+
+## Live .NET and Node RPC cross-OS CI gate (#48)
+
+The [CI workflow](../.github/workflows/ci.yml) now runs the .NET 10 and Node.js 22 client suites **separately on ubuntu-latest, macos-latest, windows-latest**. Each builds the real Rust `rystemdb` binary, launches it with `--listen 127.0.0.1:0` from the client test process, verifies actual HELLO/PING/typed CRUD, competing writer exclusion and restart replay, then cleans up. Windows runners use the native `.exe`. The native installer/package release remains independent and is not a released RPC SDK.

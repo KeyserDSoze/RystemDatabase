@@ -15,12 +15,12 @@ After the independent binary RSWP framing, CRUD key and RDB typed codecs matched
 - Validate numeric loopback-only targets at API entry. TLS 1.3/authn/authz are **not** implemented; no external address, no DNS or public port forwarding is permitted until #39.
 - Reuse three existing strict codec layers without adding a lossy JSON serialization hop. Preserve U+FEFF and signed i64 exactness and explicitly distinguish nullable missing document from explicit typed null.
 - Do **not** retry uncertain writes after TCP failure. Client errors/protocol mismatches fail closed.
-- In CI, build the **actual native Rust executable** in both npm and .NET jobs, spawn independent Rust OS processes with \`rpc-serve --listen 127.0.0.1:0\`, parse its actual reported port to avoid TOCTOU, verify HELLO/PING/typed PUT/GET/DELETE, concurrency and replay across true process restart.
+- In CI, build the **actual native Rust executable** in both npm and .NET jobs, spawn independent Rust OS processes with \`rpc-serve --listen 127.0.0.1:0\`, parse its actual reported port to avoid TOCTOU, verify HELLO/PING/typed PUT/GET/DELETE, concurrency, a refused competing native writer and replay across true process restart. The .NET/Node tests are now executed on Linux, macOS and Windows (#48).
 - Canonicalize incoming Node socket Buffer subclasses to the promised Uint8Array SDK type; a real-process test caught and scoped this regression (#47).
 
 ## Not decided / follow-ups
 
-TLS authentication and remote deployment (#39), SDK package publishing/version matrix (#27/#28), cross-OS .NET/Node live e2e (presently Linux CI only; Rust native tests are 3-OS), async Rust pooling (#26), optimistic concurrency, idempotency tokens, full version negotiation, query planning, sharding/replication and EF Core provider (#29).
+TLS authentication and remote deployment (#39), SDK package publishing/version matrix (#27/#28), cross-OS live SDK e2e (completed for Linux/macOS/Windows in #48; **published client SDK package installation is still pending**), async Rust pooling (#26), optimistic concurrency, idempotency tokens, full version negotiation, query planning, sharding/replication and EF Core provider (#29).
 
 This does not make Rystem a secure production multi-client database. Current release v0.1.2 includes only local document CLI; new RPC/SDK behavior is on main source only.
 

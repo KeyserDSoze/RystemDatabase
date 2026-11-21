@@ -5,7 +5,7 @@ Features completed on source main:
 - \`src/crud.ts\` and \`src/rdb.ts\`: strict binary CRUD key and typed nested RDB values, signed i64 BigInt, raw Uint8Array, Map objects, references, arrays/null, UTF-8 golden vectors shared with Rust/.NET.
 - **\`src/client.ts\`: \`RystemLocalClient.connect("127.0.0.1", port)\`** opens a real TCP socket, negotiates HELLO v1.0, and provides async \`ping/put/get/delete/close\`. Concurrent requests correlate via request IDs, the socket parser handles TCP segmentation/coalescing and enforces frame/pending bounds. There is no JSON wire conversion.
 - Node's native \`Buffer\` is canonicalized to plain \`Uint8Array\` in decoded wire payload and typed byte fields (TDD regression #47).
-- Real-process CI compiles the Rust server and checks nested binary CRUD, Unicode ID, concurrent requests, missing/deleted documents and persistence across server restart.
+- Real-process CI on **Linux, macOS and Windows** compiles the Rust server and checks nested binary CRUD, Unicode ID, concurrent requests, missing/deleted documents and persistence across server restart.
 
 \`\`\`sh
 cargo build --locked -p rystemdb-cli

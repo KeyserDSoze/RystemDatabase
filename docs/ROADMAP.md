@@ -47,6 +47,7 @@ GitHub Issues are the source of truth, not static checkboxes alone. [Browse open
 - [x] RSWP key-prefix v1 shared Rust codec in server/client, independent C#/TypeScript UTF-8 golden/negative tests (#42)
 - [x] Independent Rust/.NET/TypeScript native RDB value codec with nested arrays/bytes/references, i64, null and golden/error conformance (#43, partial)
 - [x] Source-only .NET async and Node.js TypeScript correlated TCP HELLO/typed PUT/GET/DELETE against real Rust server subprocess with restart, Unicode, concurrency tests (#45/#46)
+- [x] Live .NET 10 / Node.js 22 Rust RPC interoperability CI on Linux, macOS and Windows, including competing writer rejection, no preallocated ports and Windows .exe path (#48)
 - [ ] Full version-negotiated v1 body compatibility, fuzz/property coverage, cancellation/idempotency policy and multi-OS client SDK release tests (#43/#38)
 - [x] Experimental loopback-only RSWP native TCP binary CRUD server with bounded workers and TDD subprocess tests (#37)
 - [x] Synchronous Rust `LocalClient` proof-of-concept: real HELLO/PING/typed CRUD and loopback enforcement (#26, partial)
