@@ -53,13 +53,20 @@ internal static class TlsContract
                     () => RystemLoopbackClient.ConnectTlsAsync(IPAddress.Loopback, server.Port,
                         "localhost", wrongCa, ReadToken),
                     "untrusted CA");
-                try
+                // Repeated real TLS handshakes catch the macOS
+                // Network.framework race where a server closed TCP before
+                // the client's 24-byte status 6 RSWP header was delivered.
+                // The server now flushes the frame and sends TLS close_notify.
+                for (var attempt = 0; attempt < 12; attempt++)
                 {
-                    await RystemLoopbackClient.ConnectTlsAsync(IPAddress.Loopback, server.Port,
-                        "localhost", ca, new byte[32]);
-                    throw new Exception("Invalid bearer token was accepted after TLS handshake");
+                    try
+                    {
+                        await RystemLoopbackClient.ConnectTlsAsync(IPAddress.Loopback, server.Port,
+                            "localhost", ca, new byte[32]);
+                        throw new Exception("Invalid bearer token was accepted after TLS handshake");
+                    }
+                    catch (RystemRpcException e) when (e.Status == 6) { }
                 }
-                catch (RystemRpcException e) when (e.Status == 6) { }
 
                 // Existing plaintext sockets must NOT downgrade a TLS endpoint.
                 await RejectTransportAsync(

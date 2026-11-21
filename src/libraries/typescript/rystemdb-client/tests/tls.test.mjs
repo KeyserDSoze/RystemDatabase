@@ -73,7 +73,10 @@ test("TDD RED #52: real Rust server TLS1.3 verified Node binary CRUD and restart
     try {
       await assert.rejects(connect(tokenR,"not-localhost.test"),/cert|name|alt|hostname|verify|TLS/i);
       await assert.rejects(connect(tokenR,"localhost",wrongCa),/cert|verify|authority|issuer|TLS/i);
-      await assert.rejects(connect(new Uint8Array(32)),error=>error.status===6);
+      // Repeated new TLS sessions verify final Unauthorized frames arrive
+      // before close_notify, rather than racing TCP EOF on native clients.
+      for(let attempt=0;attempt<6;attempt++)
+        await assert.rejects(connect(new Uint8Array(32)),error=>error.status===6);
       await assert.rejects(
         RystemLocalClient.connect("127.0.0.1",server.port,tokenW),
         /closed|socket|timeout|connection|ECONNRESET|unsupported|frame/i
