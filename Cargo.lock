@@ -37,6 +37,7 @@ name = "rystemdb-cli"
 version = "0.1.2"
 dependencies = [
  "rystemdb-core",
+ "rystemdb-protocol",
  "rystemdb-storage",
  "serde_json",
 ]
