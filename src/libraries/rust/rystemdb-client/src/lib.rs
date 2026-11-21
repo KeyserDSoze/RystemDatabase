@@ -151,6 +151,7 @@ impl LocalClient {
 
 /// Provisional RSWP v1 CRUD key: BE u16 collection length + ASCII collection
 /// + BE u16 ID length + UTF-8 ID; see docs/RPC_SERVER.md.
+///
 /// Move into the shared protocol crate with independent SDK golden vectors
 /// as part of #38 before treating this body encoding as stable.
 fn encode_key(collection: &str, id: &str) -> Result<Vec<u8>, ClientError> {
