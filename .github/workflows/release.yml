@@ -172,7 +172,8 @@ jobs:
           tags: ghcr.io/keyserdsoze/rystemdatabase:${{ needs.prepare.outputs.tag }}
 
   install-smoke:
-    if: needs.prepare.outputs.publish == 'true'
+    # Re-test immutable already-published assets on each main push, too.
+    if: always() && needs.prepare.result == 'success' && (needs.github-release.result == 'success' || needs.prepare.outputs.publish == 'false')
     needs: [prepare, github-release]
     strategy:
       fail-fast: false
@@ -223,5 +224,11 @@ jobs:
           }
           & $bin document delete --data $data --collection users --id u42
           if ($LASTEXITCODE -ne 0) { throw 'delete failed' }
+          # Negative GET is expected: capture it without leaving PowerShell's
+          # special native exit status set to failure for the whole Actions step.
+          $PSNativeCommandUseErrorActionPreference = $false
           & $bin document get --data $data --collection users --id u42
-          if ($LASTEXITCODE -eq 0) { throw 'Deleted document was still found' }
+          $missingExitCode = $LASTEXITCODE
+          if ($missingExitCode -eq 0) { throw 'Deleted document was still found' }
+          $global:LASTEXITCODE = 0
+          Write-Host "Expected not-found response verified on Windows."
