@@ -127,6 +127,48 @@ try { RystemRdbCodec.Decode(duplicateFields); throw new Exception("Duplicate key
 catch (ArgumentException) { /* expected */ }
 Console.WriteLine("Rystem .NET typed RDB v1 conformance: PASS");
 
+// #71 RED: byte limits alone allow a compact array to expand into huge
+// managed allocations. Count the array root and all transitive child values.
+const int maxRdbNodes = 262_144;
+var denseNodes = new byte[maxRdbNodes + 10];
+new byte[]{82,68,66,0,1,7,0,4,0,0}.CopyTo(denseNodes,0);
+try {
+    RystemRdbCodec.Decode(denseNodes);
+    throw new Exception("RDB dense null-array node-amplification accepted");
+} catch (ArgumentException) { /* expected strict node budget */ }
+try {
+    RystemRdbCodec.Encode(new RdbValue.Array(
+        Enumerable.Repeat<RdbValue>(new RdbValue.Null(), maxRdbNodes).ToArray()));
+    throw new Exception("RDB encoder emitted overbudget dense array");
+} catch (ArgumentException) { /* expected */ }
+
+// Exactly maxRdbNodes nodes = one root plus maxRdbNodes-1 nulls.
+var boundary = new RdbValue.Array(
+    Enumerable.Repeat<RdbValue>(new RdbValue.Null(), maxRdbNodes - 1).ToArray());
+var boundaryWire = RystemRdbCodec.Encode(boundary);
+Check(RystemRdbCodec.Encode(RystemRdbCodec.Decode(boundaryWire))
+    .AsSpan().SequenceEqual(boundaryWire), "exact node budget changed wire bytes");
+
+// The aggregate matters, not just the largest immediate child array.
+var nestedWire = new byte[10 + 512 * (5 + 512)];
+new byte[]{82,68,66,0,1,7,0,0,2,0}.CopyTo(nestedWire,0);
+for (int i = 0; i < 512; i++)
+    new byte[]{7,0,0,2,0}.CopyTo(nestedWire,10 + i * 517);
+try {
+    RystemRdbCodec.Decode(nestedWire);
+    throw new Exception("RDB nested arrays bypassed aggregate node cap");
+} catch (ArgumentException) { /* expected */ }
+var repeatedChild = new RdbValue.Array(
+    Enumerable.Repeat<RdbValue>(new RdbValue.Null(), 512).ToArray());
+var nestedValues = new RdbValue.Array(
+    Enumerable.Repeat<RdbValue>(repeatedChild, 512).ToArray());
+try {
+    RystemRdbCodec.Encode(nestedValues);
+    throw new Exception("RDB encoder allowed overbudget nested values");
+} catch (ArgumentException) { /* expected */ }
+Console.WriteLine("Rystem .NET aggregate RDB value node budget: PASS");
+
+
 // Leading U+FEFF is a Unicode scalar in RSWP/RDB data, not a byte-order
 // signature to discard from individual decoded UTF-8 string slices.
 var bomId = "\uFEFFid";

@@ -80,3 +80,43 @@ fn tdd_rdb_decoder_rejects_descending_ascii_key_mutation_corpus() {
     let duplicate = hex_vec("52444200010800000002000000017800000000017802");
     assert_eq!(decode(&duplicate), Err(rystemdb_core::CodecError::DuplicateKey));
 }
+
+
+// #71 RED: a 64-MiB byte limit cannot bound the number of heap-allocated
+// typed values produced by dense, untrusted null-array documents. Count the
+// root container itself and ALL transitive recursive child values.
+#[test]
+fn tdd_rdb_aggregate_value_node_budget_rejects_dense_and_nested_expansion() {
+    const MAX_NODES: usize = 262_144;
+    let dense = Value::Array(vec![Value::Null; MAX_NODES]);
+    let mut wire = b"RDB\0\x01\x07".to_vec();
+    wire.extend_from_slice(&(MAX_NODES as u32).to_be_bytes());
+    wire.extend(std::iter::repeat_n(0u8, MAX_NODES));
+    assert_eq!(wire.len(), MAX_NODES + 10);
+    assert_eq!(decode(&wire), Err(rystemdb_core::CodecError::TooLarge),
+        "decoded a 256 KiB frame into over 262,144 typed heap value nodes");
+    assert_eq!(encode(&dense), Err(rystemdb_core::CodecError::TooLarge),
+        "encoder must not emit a frame the bounded decoder rejects");
+
+    // Boundary: array root plus MAX_NODES-1 null children is still valid and
+    // should retain byte-identical wire bytes.
+    let within = Value::Array(vec![Value::Null; MAX_NODES - 1]);
+    let encoded = encode(&within).expect("exact aggregate node budget must encode");
+    assert_eq!(decode(&encoded), Ok(within));
+
+    // 512 arrays of 512 nulls each. Every *individual* container is below the
+    // cap, but the 512+262144 descendants exceed the shared document budget.
+    let nested = Value::Array((0..512).map(|_| Value::Array(
+        vec![Value::Null; 512])).collect());
+    let mut nested_wire = b"RDB\0\x01\x07".to_vec();
+    nested_wire.extend_from_slice(&512u32.to_be_bytes());
+    for _ in 0..512 {
+        nested_wire.push(7);
+        nested_wire.extend_from_slice(&512u32.to_be_bytes());
+        nested_wire.extend(std::iter::repeat_n(0u8, 512));
+    }
+    assert_eq!(decode(&nested_wire), Err(rystemdb_core::CodecError::TooLarge),
+        "nested containers bypassed aggregate node budget");
+    assert_eq!(encode(&nested), Err(rystemdb_core::CodecError::TooLarge),
+        "encoder accepted aggregate nested values over the limit");
+}

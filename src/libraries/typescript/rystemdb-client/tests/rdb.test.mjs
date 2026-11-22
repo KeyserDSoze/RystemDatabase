@@ -106,3 +106,34 @@ test("TDD #65 RED: descending distinct ASCII keys are rejected, duplicates remai
   assert.throws(() => decodeRdb(Uint8Array.from(Buffer.from(
     "52444200010800000002000000017800000000017802", "hex"))), /duplicate/i);
 });
+
+
+// #71 RED: even a small RDB wire array can expand into hundreds of thousands
+// of heap values. The root and recursively nested containers count as nodes.
+test("TDD #71: aggregate RDB node budget bounds dense and nested arrays", () => {
+  const MAX_NODES = 262_144;
+  const dense = new Uint8Array(MAX_NODES + 10);
+  dense.set([82, 68, 66, 0, 1, 7, 0, 4, 0, 0], 0); // array: 262144 nulls
+  assert.equal(dense.length, MAX_NODES + 10);
+  assert.throws(() => decodeRdb(dense), /too many|node|limit|large/i,
+    "a 256 KiB wire input must not expand beyond the node budget");
+  assert.throws(() => encodeRdb(Array(MAX_NODES).fill(null)), /too many|node|limit|large/i,
+    "encoder must not emit un-decodable overbudget documents");
+
+  const within = Array(MAX_NODES - 1).fill(null);
+  const canonical = encodeRdb(within);
+  assert.deepEqual(decodeRdb(canonical), within);
+  assert.deepEqual(canonical, dense.subarray(0, canonical.length)
+    .map((byte, i) => i === 9 ? 255 : byte));
+
+  const nested = Array.from({length: 512}, () => Array(512).fill(null));
+  const nestedWire = new Uint8Array(10 + 512 * (5 + 512));
+  nestedWire.set([82,68,66,0,1,7,0,0,2,0],0); // 512 sub-arrays
+  for (let i = 0; i < 512; i++) {
+    const off = 10 + i * 517;
+    nestedWire.set([7,0,0,2,0],off); // 512 children, each a null tag
+  }
+  assert.throws(() => decodeRdb(nestedWire), /too many|node|limit|large/i,
+    "nested containers bypassed aggregate document limit");
+  assert.throws(() => encodeRdb(nested), /too many|node|limit|large/i);
+});
