@@ -1,5 +1,5 @@
 //! RED #61: real-process mTLS principal binding to verified URI SAN.
- //! All identity keys are created afresh by OpenSSL in test-only tmp dirs.
+//! All identity keys are created afresh by OpenSSL in test-only tmp dirs.
 use rystemdb_client::{ClientError, LocalClient};
 use rystemdb_core::Value;
 use std::collections::BTreeMap;
@@ -31,7 +31,7 @@ fn private(path: &Path) {
     let _ = path;
 }
 
-struct Fixture { root: PathBuf, server_fixture: PathBuf }
+struct Fixture { root: PathBuf }
 impl Fixture {
     fn new() -> Self {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -43,7 +43,7 @@ impl Fixture {
             fs::copy(server_fixture.join(filename), root.join(filename)).unwrap();
         }
         private(&root.join("server-key.pem"));
-        let f = Self {root,server_fixture};
+        let f = Self {root};
         fs::write(f.path("token.acl"), format!("{} orders rw\n{} inventory rw\n",
             "11".repeat(32), "22".repeat(32))).unwrap();
         fs::write(f.path("identity.acl"),

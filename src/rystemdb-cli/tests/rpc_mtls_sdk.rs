@@ -137,7 +137,7 @@ fn tdd_rust_sdk_sends_real_client_certificate_over_verified_tls13() {
 }
 
 #[test]
-fn tdd_rust_sdk_presenting_a_valid_certificate_does_not_bypass_denied_real_cli() {
+fn tdd_rust_sdk_presenting_a_valid_certificate_does_not_bypass_wrong_token_real_cli() {
     let f = Temp::new();
     test_identity(&f);
     fs::copy(fixture_path("server-cert.pem"), f.path("server-cert.pem")).unwrap();
@@ -166,8 +166,9 @@ fn tdd_rust_sdk_presenting_a_valid_certificate_does_not_bypass_denied_real_cli()
         "mTLS CLI with ephemeral test CA should start");
     let addr = line.split_whitespace().last().unwrap().parse().unwrap();
     let result = LocalClient::connect_mtls(addr,"localhost",
-        &fixture_path("root-ca.pem"),&f.path("client.pem"),&f.path("client.key"),&TOKEN);
-    assert!(result.is_err(), "verified client cert/token bypassed #58 deny-all gate");
+        &fixture_path("root-ca.pem"),&f.path("client.pem"),&f.path("client.key"),&[0; 32]);
+    assert!(matches!(result, Err(ClientError::Rejected(6))),
+        "verified certificate must not authorize a wrong token");
     let _=child.kill();
     let _=child.wait();
 }

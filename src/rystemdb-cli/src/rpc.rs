@@ -4,7 +4,7 @@
 //! The server owns ONE DocumentStore for its whole lifetime, and all clients
 //! share it behind a mutex. A bounded fixed worker pool prevents unlimited
 //! threads from untrusted socket connections. Not a public network database.
-use crate::auth::{load_mtls_principal_policy, AuthPolicy, Grant};
+use crate::auth::{grants_for_mtls_principal, load_mtls_principal_policy, AuthPolicy, Grant};
 use crate::tls;
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
 use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
@@ -64,12 +64,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
     // An mTLS principal policy must NEVER silently enable a bearer-only TLS
     // server. Validate before opening storage or binding to any address.
     // A CA without the principal ACL is also forbidden.
+    let mut mtls_rules: Option<Arc<Vec<(String, Grant)>>> = None;
     let mtls_ca = match (mtls_policy, mtls_ca) {
         (Some(policy_path), Some(ca_path)) => {
-            load_mtls_principal_policy(Path::new(policy_path))?;
+            let rules = load_mtls_principal_policy(Path::new(policy_path))?;
             if auth_file.is_none() || tls_cert.is_none() || tls_key.is_none() {
                 return Err("mTLS requires --auth-file, --tls-cert and --tls-key".into());
             }
+            mtls_rules = Some(Arc::new(rules));
             Some(Path::new(ca_path))
         }
         (Some(policy_path), None) => {
@@ -80,7 +82,6 @@ pub fn run(args: &[String]) -> Result<(), String> {
         (None, Some(_)) => return Err("mTLS requires --mtls-policy".into()),
         (None, None) => None,
     };
-    let mtls_required = mtls_ca.is_some();
 
     // Fail closed on invalid credentials/permissions BEFORE binding the socket
     // or opening/creating any database files.
@@ -111,13 +112,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let rx = Arc::clone(&shared_rx);
         let policy = policy.clone();
         let tls_config = tls_config.clone();
+        let mtls_rules = mtls_rules.clone();
         thread::spawn(move || loop {
             let accepted = {
                 let Ok(receiver) = rx.lock() else { break };
                 receiver.recv()
             };
             let Ok(stream) = accepted else { break };
-            handle_client(stream, &db, policy.as_deref(), tls_config.as_ref(), mtls_required);
+            handle_client(stream, &db, policy.as_deref(), tls_config.as_ref(),
+                mtls_rules.as_deref().map(Vec::as_slice));
         });
     }
     println!("Rystem Database experimental LOOPBACK RPC listening on {}",
@@ -140,7 +143,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
 fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
     policy: Option<&AuthPolicy>, tls: Option<&Arc<rustls::ServerConfig>>,
-    mtls_required: bool)
+    mtls_rules: Option<&[(String, Grant)]>)
 {
     if stream.set_read_timeout(Some(TIMEOUT)).is_err()
         || stream.set_write_timeout(Some(TIMEOUT)).is_err()
@@ -153,27 +156,46 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
             return;
         };
         let mut wrapped = rustls::StreamOwned::new(conn, stream);
-        if mtls_required {
-            // Cryptographic client chain/EKU/validity validation happens in
-            // rustls complete_io, before any RSWP frame or bearer token.
+        let identity_grants: Option<Vec<Grant>> = if let Some(rules) = mtls_rules {
+            // WebPkiClientVerifier cryptographically verifies chain, expiry
+            // and clientAuth EKU BEFORE peer_certificates() can be trusted.
             while wrapped.conn.is_handshaking() {
                 if wrapped.conn.complete_io(&mut wrapped.sock).is_err() {
                     return;
                 }
             }
-            if wrapped.conn.protocol_version() != Some(rustls::ProtocolVersion::TLSv1_3)
-                || wrapped.conn.peer_certificates().is_none_or(|certs| certs.is_empty())
-            {
+            if wrapped.conn.protocol_version() != Some(rustls::ProtocolVersion::TLSv1_3) {
                 return;
             }
-            // The authenticated leaf's canonical URI SAN is NOT extracted yet.
-            // Do not process even HELLO on an unbound client identity. A
-            // certificate and token alone MUST NOT grant any collection right.
-            wrapped.conn.send_close_notify();
-            let _ = wrapped.flush();
-            return;
-        }
-        let closing_after_reply = handle_client_frames(&mut wrapped, db, policy);
+            // Only the verified end-entity leaf may supply a principal. Use
+            // the *same vetted WebPKI X.509 parser as rustls*; never inspect
+            // an untrusted CN, client-provided HELLO field, or arbitrary bytes.
+            let leaf = match wrapped.conn.peer_certificates().and_then(|chain| chain.first()) {
+                Some(leaf) => leaf,
+                None => return,
+            };
+            let parsed = match webpki::EndEntityCert::try_from(leaf) {
+                Ok(parsed) => parsed,
+                Err(_) => return,
+            };
+            // Multiple URI SAN names are ambiguous and never normalized.
+            // URI identity requires the canonical, exact versioned policy ID.
+            let mut identities = parsed.valid_uri_names();
+            let principal = match identities.next() {
+                Some(one) if identities.next().is_none() => one,
+                _ => return,
+            };
+            let grants = match grants_for_mtls_principal(rules, principal) {
+                Some(grants) => grants,
+                None => return,
+            };
+            Some(grants)
+        } else {
+            None
+        };
+        let closing_after_reply = handle_client_frames(
+            &mut wrapped, db, policy, identity_grants.as_deref()
+        );
         if closing_after_reply {
             // After an explicit rejection status has been flushed, let the
             // peer consume it and close its side before sending our TLS
@@ -197,14 +219,15 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
             let _ = wrapped.flush();
         }
     } else {
-        let _ = handle_client_frames(&mut stream, db, policy);
+        let _ = handle_client_frames(&mut stream, db, policy, None);
     }
 }
 
 // Returns true only when an explicit final RSWP response requested teardown.
 // Invalid/truncated frames and I/O failures do not receive a grace period.
 fn handle_client_frames<S: Read + Write>(
-    stream: &mut S, db: &Mutex<DocumentStore>, policy: Option<&AuthPolicy>
+    stream: &mut S, db: &Mutex<DocumentStore>, policy: Option<&AuthPolicy>,
+    identity_grants: Option<&[Grant]>,
 ) -> bool {
     let mut greeted = false;
     let mut grants: Option<Vec<Grant>> = None;
@@ -220,10 +243,20 @@ fn handle_client_frames<S: Read + Write>(
             if request.operation != Operation::Hello {
                 (BAD_REQUEST, Vec::new(), true)
             } else if let Some(policy) = policy {
-                if let Some(allowed) = policy.authenticate(&request.payload) {
-                    grants = Some(allowed);
-                    greeted = true;
-                    (OK, vec![1, 0], false)
+                if let Some(token_grants) = policy.authenticate(&request.payload) {
+                    let allowed = match identity_grants {
+                        Some(identity) => Grant::intersect(&token_grants, identity),
+                        None => token_grants,
+                    };
+                    if allowed.is_empty() {
+                        // A valid token alone cannot authorize any collection;
+                        // a valid certificate alone cannot escalate its rights.
+                        (UNAUTHORIZED, Vec::new(), true)
+                    } else {
+                        grants = Some(allowed);
+                        greeted = true;
+                        (OK, vec![1, 0], false)
+                    }
                 } else {
                     (UNAUTHORIZED, Vec::new(), true)
                 }

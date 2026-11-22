@@ -22,9 +22,8 @@ pub(super) struct Grant {
 }
 
 impl Grant {
-    // Future verified-principal ACL intersection with independent HELLO token
-    // grants. An absent or disjoint permission never produces an allow rule.
-    #[allow(dead_code)] // #56: wired only after verified URI SAN principal extraction
+    // Intersect independently authenticated HELLO token grants with a
+    // previously verified TLS certificate principal. Neither alone authorizes.
     pub(super) fn intersect(token: &[Grant], identity: &[Grant]) -> Vec<Grant> {
         let mut result = Vec::new();
         for t in token {
@@ -163,6 +162,20 @@ const INVALID_MTLS_POLICY: &str = "invalid private mTLS principal policy";
 const MTLS_POLICY_VERSION: &str = "rystem-mtls-principal-acl-v1";
 const PRINCIPAL_PREFIX: &str = "spiffe://rystemdb.local/client/";
 
+/// Look up an exact, canonical principal only after the calling transport
+/// has cryptographically verified the peer certificate's chain and clientAuth
+/// constraints. The policy never accepts certificate CN or unverified inputs.
+pub(super) fn grants_for_mtls_principal(
+    rules: &[(String, Grant)], principal: &str,
+) -> Option<Vec<Grant>> {
+    if !valid_mtls_principal(principal) {
+        return None;
+    }
+    let grants: Vec<Grant> = rules.iter().filter(|(id, _)| id == principal)
+        .map(|(_, grant)| grant.clone()).collect();
+    (!grants.is_empty()).then_some(grants)
+}
+
 fn valid_mtls_principal(uri: &str) -> bool {
     let Some(name) = uri.strip_prefix(PRINCIPAL_PREFIX) else { return false };
     (1..=64).contains(&name.len())
@@ -279,6 +292,25 @@ mod tests {
         assert!(!valid_collection("*"));
         assert!(!valid_collection("../secret"));
     }
+    #[test]
+    fn mtls_principal_policy_looks_up_exact_ids_without_wildcards_or_cn() {
+        let rules = parse_mtls_principal_policy(
+            "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/writer orders rw\n"
+        ).unwrap();
+        let matching = grants_for_mtls_principal(
+            &rules, "spiffe://rystemdb.local/client/writer"
+        ).unwrap();
+        assert!(matching[0].allows("orders", Operation::Put));
+        for invalid in [
+            "spiffe://rystemdb.local/client/Writer", "writer", "CN=writer",
+            "spiffe://rystemdb.local/client/reader",
+            "spiffe://rystemdb.local/client/writer?admin=true",
+            "spiffe://rystemdb.local/client/writer/extra",
+        ] {
+            assert!(grants_for_mtls_principal(&rules, invalid).is_none());
+        }
+    }
+
     #[test]
     fn mtls_permission_intersection_cannot_escalate_token_or_principal() {
         let token = vec![Grant {

@@ -18,6 +18,8 @@ rystemdb-protocol = { path = "../rystemdb-protocol" }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
 rustls-pemfile = "=2.2.0"
+# Reuse rustls' existing vetted X.509 parser for verified peer URI SANs.
+rustls-webpki = { version = "=0.103.17", default-features = false }
 
 [dev-dependencies]
 rystemdb-client = { path = "../libraries/rust/rystemdb-client" }

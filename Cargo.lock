@@ -140,6 +140,7 @@ version = "0.1.2"
 dependencies = [
  "rustls",
  "rustls-pemfile",
+ "rustls-webpki",
  "rystemdb-client",
  "rystemdb-core",
  "rystemdb-protocol",
