@@ -57,7 +57,7 @@ cargo clippy --workspace --locked --all-targets -- -D warnings
 
 The real-process integration suite starts the executable with `--listen 127.0.0.1:0` to avoid ephemeral port races and verifies TLS 1.3 Rust-client HELLO/PING/native typed CRUD, wrong trusted CA, wrong hostname, plaintext RSWP against the TLS port, missing/incorrect bearer tokens, malformed/mismatched key/certificate, insecure TLS config, and non-loopback bind denial. The same Cargo suite executes on Linux, macOS and Windows in CI.
 
-**Important remaining risks:** Publicly exposed bind remains prohibited even with TLS; no mTLS, no cluster admission control, no certificate expiry/rotation/revocation workflow, no Windows ACL validation, no per-user rate limits, no full parser fuzzing or comprehensive remote threat model. Compromised local credentials and on-disk files are outside this transport layer's protection. Complete [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) before opening to other machines. [RSWP protocol](WIRE_PROTOCOL.md) | [Local bearer-token policy](LOCAL_AUTH.md) | [Local SDK guide](LOCAL_CLIENTS.md).
+**Important remaining risks:** Publicly exposed bind remains prohibited even with TLS; the opt-in mTLS verifier gate is not a usable database service (no URI SAN authorization or mTLS CRUD), no cluster admission control, no certificate expiry/rotation/revocation workflow, no Windows ACL validation, no per-user rate limits, no full parser fuzzing or comprehensive remote threat model. Compromised local credentials and on-disk files are outside this transport layer's protection. Complete [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) before opening to other machines. [RSWP protocol](WIRE_PROTOCOL.md) | [Local bearer-token policy](LOCAL_AUTH.md) | [Local SDK guide](LOCAL_CLIENTS.md).
 
 
 ## C#/.NET 10: verified SslStream, explicit root CA and SAN
@@ -145,8 +145,9 @@ Duplicate (principal, collection) rules and insecure Unix permissions/symlinks
 are rejected without echoing principals in errors.
 
 This is **only a future contract**: no code yet extracts verified client URI
-SANs, sets up Rustls client-certificate verification, enforces the policy on
-requests or intersects it with HELLO bearer-token grants. These are remaining
+SANs or grants authenticated mTLS RSWP requests. Rustls now enforces a
+client-certificate handshake in the explicitly configured mTLS gate, but
+verified URI SAN authorization and HELLO grant intersection are still pending. These are remaining
 [#56](https://github.com/KeyserDSoze/RystemDatabase/issues/56) and
 [#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) acceptance gates.
 No non-loopback listener or production remote access is enabled. The current

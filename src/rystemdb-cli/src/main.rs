@@ -28,7 +28,7 @@ PUT accepts JSON from stdin (--json -) or a local file (--json FILE).\n\
 --typed-json explicitly interprets $rystem tagged references/bytes.\n\
 The CLI persists binary documents; HTTP serve exposes health only; rpc-serve has local binary CRUD.\n\
 RPC is localhost-only; --auth-file enables ACL, TLS 1.3 requires --tls-cert and --tls-key.\n\
-No SQL, mTLS, secure remote access, distributed RPC, or multi-document transactions yet.\n"
+No SQL, usable mTLS RPC, secure remote access, distributed RPC, or multi-document transactions yet.\n"
 }
 
 fn response_for(request: &[u8]) -> &'static [u8] {

@@ -113,3 +113,20 @@ RYSTEMDB_BINARY="$(pwd)/target/debug/rystemdb" bash -c 'cd src/libraries/typescr
 ```
 
 CI runs the actual Rust server subprocess and TLS tests on Linux, macOS and Windows. On Windows use `target/debug/rystemdb.exe`; on macOS .NET 10 needs `DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1` before process startup (the SDK also opts in) for TLS1.3. The regression suites reject wrong CA/hostname, expired and future certificates, malformed tokens and plaintext traffic on TLS-only ports. Server flushes RSWP status 6 before closing TLS (#54). Full instructions: [LOCAL_TLS.md](LOCAL_TLS.md). **#39 remains open for nonlocal production security.**
+
+## Experimental client certificate gate (#58, pre-authorization only)
+
+```sh
+cargo test --locked -p rystemdb-cli --test rpc_mtls
+cargo test --locked -p rystemdb-cli --test rpc_mtls_policy
+cargo test --workspace --locked --all-targets
+cargo clippy --workspace --locked --all-targets -- -D warnings
+```
+
+The optional `--mtls-policy` and `--mtls-ca` flags together with TLS
+certificate/key and bearer ACL start a localhost TLS1.3 listener requiring
+certificate verification by an explicit client root CA. **No RSWP request is
+authorized on this listener, even if TLS verifies a certificate.** Identity
+extraction from the verified URI SAN and intersection with the token ACL remain
+#56. This is not a usable mTLS client/server, and must not be exposed remotely.
+The previous TLS-only Rust/.NET/Node modes remain active and unchanged.
