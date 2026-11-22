@@ -1,6 +1,8 @@
 //! RED #61: real-process mTLS principal binding to verified URI SAN.
 //! All identity keys are created afresh by OpenSSL in test-only tmp dirs.
 use rystemdb_client::{ClientError, LocalClient};
+#[path = "support/signed_duplicate_san.rs"]
+mod signed_duplicate_san;
 use rystemdb_core::Value;
 use std::collections::BTreeMap;
 use std::fs;
@@ -98,6 +100,16 @@ impl Fixture {
         f
     }
     fn path(&self, file: &str) -> PathBuf { self.root.join(file) }
+    fn create_signed_duplicate_san_identity(&self, name: &str) -> signed_duplicate_san::Evidence {
+        // Keep the same matching client identity key: only the duplicate
+        // SAN extension, not a key mismatch, may cause TLS rejection.
+        fs::copy(self.path("writer.key"), self.path(&format!("{name}.key"))).unwrap();
+        private(&self.path(&format!("{name}.key")));
+        signed_duplicate_san::create(
+            &self.root, &self.path("writer.pem"), &self.path("client-ca.key"),
+            &self.path(&format!("{name}.pem")),
+        )
+    }
     fn create_ca(&self, name: &str) {
         let cfg=self.path(&format!("{name}-ca.cnf"));
         fs::write(&cfg, format!(
