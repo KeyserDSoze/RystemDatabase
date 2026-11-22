@@ -422,3 +422,80 @@ fn tdd_repeated_synced_writes_immediately_reopen_without_stale_lock() {
         drop(reopened);
     }
 }
+// #64 / parent #19: simultaneous failed attempts must never weaken the
+// single-writer invariant or hold a stale lock after the owner is dropped.
+// Synchronize all contenders with a barrier, avoid sleeps/retries, and assert
+// the error returned by EVERY thread rather than ignoring lost attempts.
+#[test]
+fn tdd_concurrent_contenders_leave_exactly_one_writer_and_immediate_reopen() {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    const CONTENDERS: usize = 8;
+    const ROUNDS: i64 = 16;
+    let tmp = TempDir::new();
+    for pass in 0..ROUNDS {
+        let mut owner = DocumentStore::open(tmp.path())
+            .unwrap_or_else(|err| panic!("owner open failed at pass {pass}: {err:?}"));
+        owner.put("concurrent-sentinel", &Value::Integer(pass)).unwrap();
+        let gate = Arc::new(Barrier::new(CONTENDERS + 1));
+        let handles: Vec<_> = (0..CONTENDERS).map(|thread_id| {
+            let gate = Arc::clone(&gate);
+            let root = tmp.path().to_path_buf();
+            thread::spawn(move || {
+                gate.wait();
+                let outcome = DocumentStore::open(&root);
+                assert!(matches!(outcome, Err(StoreError::Locked)),
+                    "contender {thread_id} at pass {pass} did not see Locked: {outcome:?}");
+            })
+        }).collect();
+        gate.wait();
+        for handle in handles {
+            handle.join().expect("contending thread must not panic");
+        }
+
+        // No other owner may have acquired the lock, even transiently.
+        assert!(matches!(DocumentStore::open(tmp.path()), Err(StoreError::Locked)),
+            "original writer lost exclusion at pass {pass}");
+        drop(owner);
+        // No retries: a stale lock must fail immediately and report its error.
+        let reopened = DocumentStore::open(tmp.path())
+            .unwrap_or_else(|err| panic!("stale lock after concurrent contention {pass}: {err:?}"));
+        assert_eq!(reopened.get("concurrent-sentinel").unwrap(),
+            Some(Value::Integer(pass)));
+        drop(reopened);
+    }
+}
+
+// #64: replay itself can fail AFTER the lock was successfully acquired.
+// Roll back the deliberate test corruption and immediately reopen. This is
+// different from failing to acquire an already-held lock, and catches a
+// leaked lock File in early-Err paths within DocumentStore::open.
+#[test]
+fn tdd_corrupt_replay_open_does_not_stick_writer_lock_after_repair() {
+    let tmp = TempDir::new();
+    let mut first = DocumentStore::open(tmp.path()).unwrap();
+    first.put("acknowledged", &Value::String("synced".into())).unwrap();
+    drop(first);
+
+    let segment = tmp.path().join("segment-00000001.rdb");
+    let mut raw = fs::read(&segment).unwrap();
+    assert!(raw.len() > 20);
+    let last = raw.len() - 1;
+    let good_byte = raw[last];
+    for pass in 0..24 {
+        raw[last] = good_byte ^ 0x80;
+        fs::write(&segment, &raw).unwrap();
+        let invalid_open = DocumentStore::open(tmp.path());
+        assert!(matches!(invalid_open, Err(StoreError::Corrupt(_))),
+            "expected corrupt replay error after taking lock at pass {pass}: {invalid_open:?}");
+        // Restoring the exact original frame repairs only our test fixture.
+        raw[last] = good_byte;
+        fs::write(&segment, &raw).unwrap();
+        let restored = DocumentStore::open(tmp.path())
+            .unwrap_or_else(|err| panic!("failed replay leaked lock at pass {pass}: {err:?}"));
+        assert_eq!(restored.get("acknowledged").unwrap(),
+            Some(Value::String("synced".into())));
+        drop(restored);
+    }
+}
