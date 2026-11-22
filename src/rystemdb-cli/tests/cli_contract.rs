@@ -21,6 +21,8 @@ fn cli_help_distinguishes_http_health_from_loopback_binary_rpc() {
     assert!(help.contains("--auth-file PRIVATE_PATH"));
     assert!(help.contains("--tls-cert CERT --tls-key KEY"));
     assert!(help.contains("TLS 1.3 requires"));
-    assert!(help.contains("No SQL, mTLS"));
+    assert!(help.contains("--mtls-policy POLICY --mtls-ca CLIENT_CA"));
+    assert!(help.contains("no RSWP authorization"));
+    assert!(help.contains("No SQL, usable mTLS RPC"));
     assert!(help.contains("localhost-only"));
 }
