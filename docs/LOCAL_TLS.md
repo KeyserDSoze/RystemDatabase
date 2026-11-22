@@ -238,3 +238,35 @@ The stricter source-only identity profile accepts a certificate SAN containing
 **only one URI GeneralName**; it intentionally rejects a URI+DNS certificate.
 Never treat this structural guard as a replacement for Rustls' actual X.509
 cryptographic verification, or as a formal audit of production PKI/remote TLS.
+
+### Real, CA-signed duplicate SAN extension regression (#63)
+
+A second real-process integration test uses **two distinct X.509
+SubjectAlternativeName extension OIDs** (OID 2.5.29.17) within one client leaf,
+not merely two URI names in one SAN. The normal OpenSSL certificate signing
+configuration silently replaces duplicate OIDs; a **test-only** fixture helper
+instead extracts the original, valid v3 TBSCertificate's extension sequence,
+appends a separate SAN extension containing a different URI, re-encodes the
+TBS, and signs it with the ephemeral client CA using SHA-256/RSA.
+
+OpenSSL independently verifies the TBS signature against the ephemeral CA's
+public key, then `asn1parse` confirms **two separate SAN OID occurrences** in
+the final certificate DER. The helper encodes that exact DER as PEM without
+normalizing or discarding either extension. A rustls PEM read verifies the
+original bytes were preserved; neither the private key nor test CA is stored
+in Git. This is an intentionally **invalid X.509 identity** despite a real,
+valid issuer signature and a matching client private key.
+
+The production Rust SDK appropriately refuses such a certificate during
+local TLS configuration. That rejection alone does **not** establish server
+safety. Therefore a **test-only Rustls client certificate resolver** presents
+the already-signed malformed certificate to the actual Rust CLI over a real
+TLS1.3 client-certificate handshake, without bypassing server CA/hostname
+verification. The test asserts no RSWP HELLO authorization or document access;
+a standard canonical single-SAN writer concurrently performs typed CRUD.
+
+Run `cargo test --locked -p rystemdb-cli --test rpc_mtls_identity` to exercise
+this and the earlier wrong issuer/EKU/expiry/SAN/token cases. No production
+client verifier, trust rule, non-loopback listener, or published SDK changes
+are implied. Cross-language mTLS, revocation, rotation and Windows ACL review
+remain open under #55/#39.

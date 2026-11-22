@@ -98,3 +98,28 @@ deterministic byte mutations and real CA-signed, OpenSSL-generated ephemeral
 bad-client SANs across all three OS. There is no private identity key
 committed to Git; the checks are not a formal security audit and do not
 approve remote binding or a production PKI.
+
+## Signed duplicate extension real TLS negative conformance (#63)
+
+A strict structural unit check on a synthetic DER certificate was insufficient
+proof that the real TLS server rejects a **validly signed** certificate with
+duplicated SAN extension OIDs. This regression generates a fresh v3 leaf
+under the same ephemeral client CA and private key, appends an actual second
+SAN extension (different URI identity) in TBSCertificate, **re-signs** the
+modified TBS using SHA-256/RSA, independently verifies the resulting signature
+with the CA's public key, and independently counts the two extension OIDs via
+OpenSSL `asn1parse`. Re-encoding the signed DER in PEM never removes or
+normalizes the duplicate SAN data.
+
+The standard Rust SDK's `CertifiedKey::from_der` fails on this malformed
+certificate *locally*. This does not demonstrate server behavior, so a
+**test-only** Rustls `ResolvesClientCert` supplies the malformed leaf without
+invoking local X.509 key-matching parsing; its private-key signing still uses
+the usual Rustls ring provider, and the client still enforces the TLS1.3
+server CA/hostname verification. The actual `rpc-serve` server must reject the
+certificate or close before any authorized HELLO. Canonical single-SAN writer
+CRUD is asserted separately.
+
+No production trust-verifier changes, persistent test keys, remote listener,
+client PKI rotation/revocation, audit completion or production mTLS assurance
+follow from this test. Parent #55 and #39 remain open.

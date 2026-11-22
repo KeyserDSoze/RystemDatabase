@@ -163,3 +163,19 @@ The tests generate real ephemeral client identities with raw SAN extension
 values using OpenSSL (`openssl` must be on `PATH`) plus deterministic malformed
 DER mutation vectors; no private client keys are committed. This remains
 an experimental **loopback-only** feature, without remote security sign-off.
+
+## Signed duplicate SAN extension cross-platform regression (#63)
+
+```sh
+cargo test --locked -p rystemdb-cli --test rpc_mtls_identity tdd_signed_duplicate_san_extension_is_rejected_by_real_mtls_server
+```
+
+The test creates an ephemeral CA-signed X.509 client leaf with **two distinct
+SAN extension OIDs**. It independently verifies the RSA/SHA-256 signature and
+counts the OIDs with OpenSSL ASN.1 inspection. To avoid treating the normal
+Rust SDK's local malformed-certificate rejection as proof of server safety,
+the test uses a **test-only** Rustls client certificate resolver to send the
+invalid leaf to the actual `rpc-serve` TLS1.3 listener. The standard server CA
+and hostname verification remains active. The server must deny RSWP HELLO;
+a canonical single-SAN writer must still complete typed CRUD. All keys remain
+in temporary test directories and are never committed.
