@@ -146,3 +146,33 @@ if (args.Length > 0)
     await LiveContract.RunAsync(args[0]);
     await TlsContract.RunAsync(args[0]);
 }
+
+
+// #65 RED: the Rust/TypeScript/.NET object-key codec contract requires
+// strictly increasing UTF-8 key bytes, also on decode. Distinct reversed
+// keys must not be silently re-encoded to a different canonical byte string.
+foreach (var invalidObject in new[] {
+    "52444200010800000002000000016200000000016102",
+    "5244420001080000000200000004f09f98800000000003ee808002",
+    "52444200010800000001000000056f757465720800000002000000016200000000016102",
+}) {
+    try {
+        RystemRdbCodec.Decode(Convert.FromHexString(invalidObject));
+        throw new Exception("Noncanonical RDB object key order was accepted");
+    } catch (ArgumentException) {
+        // Expected only after strict canonical ordering is implemented.
+    }
+}
+for (byte larger = (byte)'b'; larger <= (byte)'z'; larger++) {
+    for (byte smaller = (byte)'a'; smaller < larger; smaller++) {
+        var descending = new byte[] {82,68,66,0,1,8,0,0,0,2,
+            0,0,0,1,larger,0,0,0,0,1,smaller,2};
+        try {
+            RystemRdbCodec.Decode(descending);
+            throw new Exception($"Descending RDB object key order accepted: {larger} > {smaller}");
+        } catch (ArgumentException) {
+            // Expected.
+        }
+    }
+}
+Console.WriteLine("Rystem .NET strict canonical RDB object keys: PASS");

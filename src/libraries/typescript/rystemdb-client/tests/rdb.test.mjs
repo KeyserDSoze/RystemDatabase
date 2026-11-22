@@ -78,3 +78,31 @@ test("TDD RED: binary byte fields decoded from Node Socket Buffer are plain Uint
   assert.equal(Object.getPrototypeOf(decoded.get("binary")), Uint8Array.prototype,
     "RDB byte fields must be plain Uint8Array, not Buffer");
 });
+
+
+test("TDD #65 RED: RDB rejects reordered distinct keys at all nesting depths", () => {
+  const bad = [
+    "52444200010800000002000000016200000000016102",
+    // Astral emoji has UTF-8 prefix f0, after BMP private use ee.
+    "5244420001080000000200000004f09f98800000000003ee808002",
+    // A nested map must obey exactly the same canonical field order.
+    "52444200010800000001000000056f757465720800000002000000016200000000016102",
+  ];
+  for (const [i, hex] of bad.entries()) {
+    assert.throws(() => decodeRdb(Uint8Array.from(Buffer.from(hex, "hex"))),
+      /canonical|order/i, "accepted out-of-order object " + i);
+  }
+});
+
+test("TDD #65 RED: descending distinct ASCII keys are rejected, duplicates remain distinct", () => {
+  for (let larger = 98; larger <= 122; larger++) {
+    for (let smaller = 97; smaller < larger; smaller++) {
+      const binary = Uint8Array.from([82,68,66,0,1,8,0,0,0,2,
+        0,0,0,1,larger,0,
+        0,0,0,1,smaller,2]);
+      assert.throws(() => decodeRdb(binary), /canonical|order/i);
+    }
+  }
+  assert.throws(() => decodeRdb(Uint8Array.from(Buffer.from(
+    "52444200010800000002000000017800000000017802", "hex"))), /duplicate/i);
+});
