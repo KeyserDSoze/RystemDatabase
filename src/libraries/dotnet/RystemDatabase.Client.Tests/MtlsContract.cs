@@ -53,6 +53,11 @@ internal static class MtlsContract
         await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(
             IPAddress.Loopback, 1, "localhost", root, writer.Certificate,
             test.Reader.PrivateKey, WriterToken), "mismatched client certificate/key");
+        var malformedCertificate = Path.Combine(test.DirectoryPath, "malformed-client.pem");
+        File.WriteAllText(malformedCertificate, "NOT A PEM CERTIFICATE");
+        await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(
+            IPAddress.Loopback, 1, "localhost", root, malformedCertificate,
+            writer.PrivateKey, WriterToken), "malformed client certificate");
         var hugeCertificate = Path.Combine(test.DirectoryPath, "oversized-client.pem");
         File.WriteAllText(hugeCertificate, new string('x', 65537));
         await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(

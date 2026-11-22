@@ -155,7 +155,34 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
                 cert.Dispose();
                 throw new ArgumentException("Client certificate has no matching private key");
             }
-            return cert;
+            if (!OperatingSystem.IsWindows())
+                return cert;
+
+            // #69 Windows Schannel cannot use the *purely in-memory*
+            // private key returned by CreateFromPemFile for client TLS.
+            // Roundtrip an in-memory PKCS#12 into a temporary OS-managed
+            // USER key set, without PersistKeySet, Exportable or a .pfx file.
+            // The OS may briefly materialize the private key under the
+            // user profile; disposing the imported certificate permits the
+            // OS to delete its temporary key container. Windows ACL and
+            // secure lifecycle audit are still outstanding under #55/#39.
+            try
+            {
+                byte[] pkcs12 = cert.Export(X509ContentType.Pkcs12);
+                try
+                {
+                    return X509CertificateLoader.LoadPkcs12(
+                        pkcs12, null, X509KeyStorageFlags.UserKeySet);
+                }
+                finally
+                {
+                    System.Security.Cryptography.CryptographicOperations.ZeroMemory(pkcs12);
+                }
+            }
+            finally
+            {
+                cert.Dispose();
+            }
         }
         catch (System.Security.Cryptography.CryptographicException)
         {
