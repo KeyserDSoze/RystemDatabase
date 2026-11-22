@@ -11,6 +11,7 @@ pub use rystemdb_protocol::{
 };
 use rystemdb_core::{decode as decode_document, encode as encode_document, CodecError, Value};
 use std::fmt;
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
@@ -36,7 +37,7 @@ impl fmt::Display for ClientError {
             Self::Io(err) => write!(f, "local TCP I/O error: {err}"),
             Self::Protocol(err) => write!(f, "wire protocol error: {err}"),
             Self::Codec(err) => write!(f, "binary document error: {err}"),
-            Self::RemoteForbidden => write!(f, "only localhost is supported without TLS and authentication"),
+            Self::RemoteForbidden => write!(f, "only numeric localhost destinations are supported"),
             Self::InvalidKey => write!(f, "invalid collection or document ID"),
             Self::InvalidDocument => write!(f, "PUT requires an object document"),
             Self::Rejected(status) => write!(f, "server returned RSWP status {status}"),
@@ -67,7 +68,7 @@ impl From<CodecError> for ClientError {
 }
 
 /// Single persistent TCP connection to an experimental *localhost only* Rystem
-/// server. This is synchronous, not pooled, multi-connection or TLS capable.
+/// server. This is synchronous, not pooled or multi-connection.
 enum Transport {
     Plain(TcpStream),
     Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
@@ -143,22 +144,45 @@ impl LocalClient {
     }
 
     /// Verified TLS 1.3-only connection to a numeric loopback address.
-    /// The server name is checked against the chain issued by the given CA;
-    /// no custom insecure verifier, TLS1.2 or plaintext fallback is possible.
-    /// The bearer token is not transmitted until the TLS handshake has finished.
+    /// The server certificate is checked against the explicitly supplied
+    /// trust root and name before any RSWP HELLO is sent.
     pub fn connect_tls(
         addr: SocketAddr, server_name: &str, ca_file: &std::path::Path,
         token: &[u8; 32],
     ) -> Result<Self, ClientError> {
+        Self::connect_tls_inner(addr, server_name, ca_file, None, token)
+    }
+
+    /// Present a separate client certificate and protected key over verified
+    /// TLS 1.3, using the standard rustls certificate/key verifier. No secret
+    /// is passed in process arguments. This API is loopback-only and does NOT
+    /// make #58's deny-all mTLS server into a usable CRUD service until #59.
+    ///
+    /// On Unix the key file must be regular, not a symlink, and inaccessible
+    /// to group/other users. NTFS ACL inspection is not implemented yet (#39).
+    pub fn connect_mtls(
+        addr: SocketAddr, server_name: &str, ca_file: &std::path::Path,
+        client_cert: &std::path::Path, client_key: &std::path::Path,
+        token: &[u8; 32],
+    ) -> Result<Self, ClientError> {
+        Self::connect_tls_inner(addr, server_name, ca_file,
+            Some((client_cert, client_key)), token)
+    }
+
+    fn connect_tls_inner(
+        addr: SocketAddr, server_name: &str, ca_file: &std::path::Path,
+        client_identity: Option<(&std::path::Path, &std::path::Path)>,
+        token: &[u8; 32],
+    ) -> Result<Self, ClientError> {
+        // Validate destination before reading any private credentials.
         if !addr.ip().is_loopback() {
             return Err(ClientError::RemoteForbidden);
         }
-        let pem = std::fs::read(ca_file)?;
-        if pem.len() > 64 * 1024 { return Err(ClientError::TlsConfig); }
+        let pem = read_tls_pem(ca_file, false)?;
         let mut reader = pem.as_slice();
         let certs = rustls_pemfile::certs(&mut reader)
             .collect::<Result<Vec<_>, _>>().map_err(|_| ClientError::TlsConfig)?;
-        if certs.is_empty() { return Err(ClientError::TlsConfig); }
+        if certs.is_empty() || certs.len() > 8 { return Err(ClientError::TlsConfig); }
         let mut roots = rustls::RootCertStore::empty();
         for cert in certs {
             roots.add(cert).map_err(|_| ClientError::TlsConfig)?;
@@ -166,11 +190,29 @@ impl LocalClient {
         let server_name = rustls::pki_types::ServerName::try_from(server_name.to_owned())
             .map_err(|_| ClientError::TlsConfig)?;
         let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
-        let config = rustls::ClientConfig::builder_with_provider(provider)
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(|_| ClientError::TlsConfig)?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+            .with_root_certificates(roots);
+        let config = if let Some((cert_path, key_path)) = client_identity {
+            let cert_pem = read_tls_pem(cert_path, false)?;
+            let private_pem = read_tls_pem(key_path, true)?;
+            let mut input = cert_pem.as_slice();
+            let chain = rustls_pemfile::certs(&mut input)
+                .collect::<Result<Vec<_>, _>>().map_err(|_| ClientError::TlsConfig)?;
+            if chain.is_empty() || chain.len() > 8 { return Err(ClientError::TlsConfig); }
+            let mut key_input = private_pem.as_slice();
+            let key = rustls_pemfile::private_key(&mut key_input)
+                .map_err(|_| ClientError::TlsConfig)?.ok_or(ClientError::TlsConfig)?;
+            // CertifiedKey::from_der validates key format and that the public
+            // key corresponds to the selected leaf certificate. No custom
+            // verifier or insecure override is allowed.
+            builder.with_client_auth_cert(chain, key)
+                .map_err(|_| ClientError::TlsConfig)?
+        } else {
+            builder.with_no_client_auth()
+        };
+
         let mut socket = TcpStream::connect_timeout(&addr, TIMEOUT)?;
         socket.set_read_timeout(Some(TIMEOUT))?;
         socket.set_write_timeout(Some(TIMEOUT))?;
@@ -178,8 +220,8 @@ impl LocalClient {
         let mut connection = rustls::ClientConnection::new(
             std::sync::Arc::new(config), server_name
         ).map_err(|_| ClientError::TlsConfig)?;
-        // Complete hostname/chain verification BEFORE sending the token or
-        // any RSWP application data, and never silently fallback to plaintext.
+        // Complete chain/hostname verification before sending token or any
+        // RSWP bytes; failed TLS never falls back to plaintext.
         while connection.is_handshaking() {
             connection.complete_io(&mut socket)?;
         }
@@ -250,6 +292,47 @@ impl LocalClient {
         }
         Ok(reply)
     }
+}
+
+/// Read only regular, bounded, non-symlinked TLS PEM files. For private
+/// keys, forbid group/other permissions on Unix and ensure the inode did not
+/// change between metadata inspection and open. No paths, PEM contents or
+/// credential bytes are included in errors. Windows ACL auditing remains #39.
+fn read_tls_pem(path: &std::path::Path, private: bool) -> Result<Vec<u8>, ClientError> {
+    const MAX_PEM: u64 = 64 * 1024;
+    #[cfg(not(unix))]
+    let _ = private;
+    let before = fs::symlink_metadata(path).map_err(|_| ClientError::TlsConfig)?;
+    if !before.file_type().is_file() || before.len() == 0 || before.len() > MAX_PEM {
+        return Err(ClientError::TlsConfig);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if private && before.permissions().mode() & 0o077 != 0 {
+            return Err(ClientError::TlsConfig);
+        }
+    }
+    let file = File::open(path).map_err(|_| ClientError::TlsConfig)?;
+    let after = file.metadata().map_err(|_| ClientError::TlsConfig)?;
+    if !after.is_file() || after.len() == 0 || after.len() > MAX_PEM {
+        return Err(ClientError::TlsConfig);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if before.dev() != after.dev() || before.ino() != after.ino()
+            || (private && after.permissions().mode() & 0o077 != 0)
+        {
+            return Err(ClientError::TlsConfig);
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_PEM + 1).read_to_end(&mut bytes).map_err(|_| ClientError::TlsConfig)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_PEM {
+        return Err(ClientError::TlsConfig);
+    }
+    Ok(bytes)
 }
 
 /// Use the exact shared RSWP v1 key codec. No duplicate validation,

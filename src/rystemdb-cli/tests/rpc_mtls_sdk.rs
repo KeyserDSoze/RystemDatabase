@@ -45,14 +45,21 @@ fn test_identity(dir: &Temp) {
         "[v3_client]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\nsubjectAltName=URI:spiffe://rystemdb.local/client/writer\n").unwrap();
     let ca_key=dir.path("ca.key"); let ca_cert=dir.path("ca.pem");
     let leaf_key=dir.path("client.key"); let csr=dir.path("client.csr"); let leaf=dir.path("client.pem");
-    let as_str = |p: &Path| p.to_str().expect("test-only temporary path is UTF-8");
-    openssl(&["req","-x509","-newkey","rsa:2048","-nodes","-keyout",as_str(&ca_key),
-        "-out",as_str(&ca_cert),"-days","3","-config",as_str(&dir.path("ca.cnf"))]);
-    openssl(&["req","-new","-newkey","rsa:2048","-nodes","-keyout",as_str(&leaf_key),
-        "-out",as_str(&csr),"-subj","/CN=untrusted-display-name"]);
-    openssl(&["x509","-req","-in",as_str(&csr),"-CA",as_str(&ca_cert),
-        "-CAkey",as_str(&ca_key),"-CAcreateserial","-out",as_str(&leaf),"-days","2",
-        "-extfile",as_str(&dir.path("client.cnf")),"-extensions","v3_client"]);
+    // Keep the owned UTF-8 names alive across the OpenSSL argv calls.
+    let ca_key_s=ca_key.to_str().unwrap().to_owned();
+    let ca_cert_s=ca_cert.to_str().unwrap().to_owned();
+    let leaf_key_s=leaf_key.to_str().unwrap().to_owned();
+    let csr_s=csr.to_str().unwrap().to_owned();
+    let leaf_s=leaf.to_str().unwrap().to_owned();
+    let ca_cfg_s=dir.path("ca.cnf").to_str().unwrap().to_owned();
+    let leaf_cfg_s=dir.path("client.cnf").to_str().unwrap().to_owned();
+    openssl(&["req","-x509","-newkey","rsa:2048","-nodes","-keyout",ca_key_s.as_str(),
+        "-out",ca_cert_s.as_str(),"-days","3","-config",ca_cfg_s.as_str()]);
+    openssl(&["req","-new","-newkey","rsa:2048","-nodes","-keyout",leaf_key_s.as_str(),
+        "-out",csr_s.as_str(),"-subj","/CN=untrusted-display-name"]);
+    openssl(&["x509","-req","-in",csr_s.as_str(),"-CA",ca_cert_s.as_str(),
+        "-CAkey",ca_key_s.as_str(),"-CAcreateserial","-out",leaf_s.as_str(),"-days","2",
+        "-extfile",leaf_cfg_s.as_str(),"-extensions","v3_client"]);
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
         for p in [ca_key,leaf_key] {
