@@ -48,3 +48,28 @@ decoders accepted some noncanonical binary documents. Those inputs now fail
 rather than being silently normalized. A future public canonical format,
 permanent on-disk migration or network version negotiation requires a
 separate acceptance under #43/#38. This does not certify production security.
+
+## Aggregate tagged-value expansion bound (#71, 2026-11-22)
+
+RDB v1's 64 MiB encoded document cap and depth bound did not control the
+number of independently allocated typed values. A mere ~256 KiB wire
+array of nulls expanded to 262,145 managed/heap nodes, and nesting
+amplified the effect without exceeding individual container count checks.
+The deterministic RED tests reproduced acceptance on Rust, Node and C#.
+
+Enforce one **262,144 tagged-value-node document budget** across all
+recursive encoder/decoder calls, root included. A tagged array/object
+counts as one plus its recursive element/field values; object key names
+are UTF-8 bytes but not additional tagged value nodes. Require declared
+container lengths to fit at least one node per child in the remaining
+budget **before** allocating (especially C# List initial capacity).
+Keep existing 64 MiB byte bound, depth 64, strict UTF-8/key order and
+RDB v1 tags/version. Reject overbudget input rather than truncating.
+
+This deliberately rejects a subset of previously accepted experimental
+RDB v1 bytes, including large all-null arrays. In-budget canonical
+bytes remain unchanged. Node count cannot bound total heap bytes,
+as variable-length fields and runtime overhead still matter. Connection
+rate limits, complete fuzz/property testing and memory benchmarks
+remain future requirements under #11/#39/#43; do not claim an exhaustive
+DoS fix or a public schema/format migration.

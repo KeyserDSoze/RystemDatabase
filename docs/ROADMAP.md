@@ -46,6 +46,7 @@ GitHub Issues are the source of truth, not static checkboxes alone. [Browse open
 - [x] RSWP v1 fixed binary framing and Rust/.NET/TypeScript golden vector test infrastructure (#24/#27/#28, partial milestones)
 - [x] RSWP key-prefix v1 shared Rust codec in server/client, independent C#/TypeScript UTF-8 golden/negative tests (#42)
 - [x] Independent Rust/.NET/TypeScript native RDB value codec with nested arrays/bytes/references, i64, null and golden/error conformance (#43, partial)
+- [x] Aggregate 262,144-tagged-value node cap on RDB v1 encode and decode (Rust/.NET/Node); dense/nested expansion RED→GREEN tests (#71, partial #43/#11)
 - [x] Source-only .NET async and Node.js TypeScript correlated TCP HELLO/typed PUT/GET/DELETE against real Rust server subprocess with restart, Unicode, concurrency tests (#45/#46)
 - [x] Live .NET 10 / Node.js 22 Rust RPC interoperability CI on Linux, macOS and Windows, including competing writer rejection, no preallocated ports and Windows .exe path (#48)
 - [x] Optional local-only authenticated HELLO + deny-by-default collection `r/w` ACL from private credential file; real Rust/.NET/Node SDK tests across all three OS (#49/#50)

@@ -79,11 +79,41 @@ The literal is asserted independently in `src/rystemdb-core/tests/rdb_compat.rs`
 ## Safety and format limits
 
 - Maximum complete encoded value: **64 MiB**. The RPC envelope separately limits a single request/response payload to **16 MiB**, so not every locally valid RDB value can be sent in one RPC frame.
+- Maximum **262,144 aggregate tagged value nodes per document** (root value **included**; each array, object, byte/string, scalar or typed reference is one node, and every nested array/object element value consumes another). Object **key names** and string bytes are not separate tagged value nodes; their bytes count against the encoded byte limit. This applies equally to **encoding and decoding** in Rust, .NET and Node. Container declared lengths are checked against the *remaining shared node budget before allocating collection capacity or iterating children*. A tiny dense/null frame can otherwise amplify into many heap values.
 - Maximum recursive nesting depth: **64** (root depth 0).
 - Reject truncated length prefixes and bodies, malformed UTF-8, unsupported format version/tags, **duplicate or out-of-order object keys**, unknown/trailing bytes, non-finite floats, invalid references and excessive sizes before allocating unreasonable buffers.
 - JavaScript and .NET writers reject isolated invalid UTF-16 surrogate sequences rather than substituting a Unicode replacement character.
 - **Leading `U+FEFF` in a UTF-8 string is data**, not a removable file BOM; TypeScript readers deliberately set `TextDecoder(..., {fatal:true, ignoreBOM:true})` to preserve it, confirmed by TDD regression #44.
 - The primitive tagged format is compatible with the experimental binary row codec; schema field IDs, decimal128, compression, lazy field projection and versioned migrations remain future engine work (#33).
+
+## Aggregate decoded value-node budget (#71, cross-language hardening)
+
+The 64 MiB input frame limit alone did not cap heap amplification: an
+experimental **262,154-byte** RDB array containing 262,144 null values was
+previously accepted by every decoder, even though it creates **262,145
+tagged value nodes** including the root array. Rust/Node/.NET RED tests
+reproduced that behavior. At most **262,144** nodes may now be created
+from one RDB frame; a root array with exactly **262,143 null children**
+fits. Nested arrays/objects share one budget across the entire frame:
+a root of 512 arrays each containing 512 nulls is over budget even
+though no one immediate array contains more than 512 entries.
+
+On decode the budget is checked before creating collections
+(in particular, before the .NET array's eager `List<RdbValue>` capacity
+allocation) and incremented for every recursively parsed tagged value.
+Encoders enforce the identical budget so they do not produce new bytes
+the decoders cannot accept. Existing canonical, in-budget RDB v1 frames,
+including the golden vector and typed CRUD, remain byte-identical.
+
+**Compatibility:** this adds a **deliberately stricter acceptance rule**
+to the unreleased experimental RDB v1 codec. Previously accepted
+overbudget typed documents are now refused with an RDB size/node-limit
+error; no input is truncated or silently repaired. Do not deploy this
+without a version/migration policy for stored nonconforming documents.
+This is **not** a measured performance improvement, a maximum heap-size
+guarantee (long strings, dictionaries, language object overhead), full
+fuzz coverage, request rate limiting or a production DoS threat model.
+These remain open under #43/#11/#39.
 
 ## Next end-to-end gates
 

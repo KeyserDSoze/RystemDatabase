@@ -306,3 +306,27 @@ through `X509CertificateLoader.LoadPkcs12` with `UserKeySet`, no
 key material: **Windows key ACL, cleanup, rotation and revocation remain
 security backlog under #55/#39**, not assured by this integration test.
 See [LOCAL_TLS.md](LOCAL_TLS.md). This is not remotely deployable.
+
+## Aggregate RDB v1 typed node budget regression (#71)
+
+```sh
+cargo test --locked -p rystemdb-core --test rdb_compat tdd_rdb_aggregate_value_node_budget
+(cd src/libraries/typescript/rystemdb-client && npm test)
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
+```
+
+Both encoders and decoders in Rust, Node/TypeScript and .NET now enforce
+at most **262,144 aggregate tagged values per document**, including root,
+all nested container elements and object field values. The 64 MiB wire
+and max depth 64 limits still apply; their values and canonical bytes
+did not change. Tests use a dense compact binary corpus of **262,144
+null children (one node over limit)**, a valid exactly-at-budget array
+of 262,143 null children and 512 arrays each with 512 null children
+(aggregate over limit despite small per-container sizes).
+
+The check runs **before** eagerly reserving .NET List capacity, and
+prevents both accepting overbudget input and emitting such frames.
+This deliberately tightens the unreleased experimental codec's accepted
+v1 documents. It is not full heap accounting or fuzzing, benchmarks,
+per-connection quota, disk format migration or production DoS assurance;
+track those on #43/#11/#39.
