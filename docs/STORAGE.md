@@ -98,8 +98,12 @@ removing the lockfile or adding retries. The older isolated Linux incident
 has not been independently proven to have the same cause.
 
 The Linux CI Rust job independently repeats the isolated lock regressions
-**six times** and fails on any iteration; the ordinary Rust and fault-injection
-matrix continues on all three OSes. These tests improve confidence but do
+**six times** and fails on any iteration; the macOS CI Rust job now repeats
+the early-Err corrupt replay → immediate reopen regression **ten independent
+times** to guard against the observed intermittent `Locked` result (#66).
+Neither job retries an individual failed open, ignores a failed test, or uses
+`continue-on-error`. The ordinary Rust and fault-injection matrix continues
+on all three OSes. These tests improve confidence but do
 **not prove the root cause** of the original intermittent Linux failure or
 guarantee lock correctness for all filesystems/adversarial processes.
 Parent [#19](https://github.com/KeyserDSoze/RystemDatabase/issues/19)

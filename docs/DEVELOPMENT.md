@@ -232,6 +232,8 @@ cargo test --locked -p rystemdb-storage --test storage_contract tdd_concurrent_c
 ```
 
 The full Rust/fault-injection, Node/.NET and Docker CI still runs across all
-three OSes; Linux also repeats the lock-specific gate six times. Parent #19
-remains open until its original *Linux* flake's root cause is independently
-attributed; one macOS reproduction cannot prove both incidents identical.
+three OSes; Linux also repeats the lock-specific gate six times. macOS runs
+**ten isolated repetitions** of the failed-replay lock regression, with no
+within-test retry or suppressed errors. Parent #19 remains open until its
+original *Linux* flake's root cause is independently attributed; one macOS
+reproduction cannot prove both incidents identical.
