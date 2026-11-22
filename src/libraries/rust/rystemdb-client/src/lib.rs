@@ -278,6 +278,17 @@ mod tests {
     }
 
     #[test]
+    fn mtls_client_refuses_nonloopback_before_reading_any_credential_file() {
+        let missing = std::path::Path::new("missing-client-mtls-credential");
+        for addr in ["0.0.0.0:8790", "198.51.100.10:8790", "[2001:db8::1]:8790"] {
+            let result = LocalClient::connect_mtls(
+                addr.parse().unwrap(), "localhost", missing, missing, missing, &[0; 32]
+            );
+            assert!(matches!(result, Err(ClientError::RemoteForbidden)));
+        }
+    }
+
+    #[test]
     fn connection_is_explicitly_localhost_only() {
         for addr in ["0.0.0.0:8790", "198.51.100.10:8790", "[2001:db8::1]:8790"] {
             assert!(matches!(LocalClient::connect(addr.parse().unwrap()), Err(ClientError::RemoteForbidden)));
