@@ -68,6 +68,14 @@ impl Fixture {
             Some("URI:spiffe://rystemdb.local/client/writer"), "serverAuth");
         f.create_identity("untrusted-writer", "untrusted",
             Some("URI:spiffe://rystemdb.local/client/writer"), "clientAuth");
+        f.create_identity("query", "client",
+            Some("URI:spiffe://rystemdb.local/client/writer?role=admin"), "clientAuth");
+        f.create_identity("wrongprefix", "client",
+            Some("URI:spiffe://other.local/client/writer"), "clientAuth");
+        f.create_identity("percent", "client",
+            Some("URI:spiffe://rystemdb.local/client/writer%2Fadmin"), "clientAuth");
+        f.create_dated_identity("expired", "20100101000000Z", "20110101000000Z");
+        f.create_dated_identity("future", "20350101000000Z", "20360101000000Z");
         f
     }
     fn path(&self, file: &str) -> PathBuf { self.root.join(file) }
@@ -100,6 +108,33 @@ impl Fixture {
             "-CA",text_path(&ca_cert),"-CAkey",text_path(&ca_key),
             "-CAcreateserial","-out",text_path(&cert),"-days","2",
             "-extfile",text_path(&config),"-extensions","identity"]);
+        private(&key);
+    }
+    fn create_dated_identity(&self, name: &str, start: &str, end: &str) {
+        // OpenSSL "ca" supports fixed validity intervals for real negative
+        // X.509 handshake tests. Every signing database is ephemeral and
+        // never references production or committed key material.
+        let key=self.path(&format!("{name}.key"));
+        let csr=self.path(&format!("{name}.csr"));
+        let cert=self.path(&format!("{name}.pem"));
+        openssl(&["req","-new","-newkey","rsa:2048","-nodes",
+            "-keyout",text_path(&key),"-out",text_path(&csr),
+            "-subj","/CN=DO-NOT-TRUST-CN"]);
+        let ext=self.path(&format!("{name}-ext.cnf"));
+        fs::write(&ext,
+            "[identity]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\nsubjectAltName=URI:spiffe://rystemdb.local/client/writer\n").unwrap();
+        let serial=self.path(&format!("{name}-serial.txt"));
+        let db=self.path(&format!("{name}-index.txt"));
+        fs::write(&serial, "01\n").unwrap();
+        fs::write(&db, "").unwrap();
+        let ca_conf=self.path(&format!("{name}-sign.cnf"));
+        let root=text_path(&self.root);
+        fs::write(&ca_conf,format!(
+            "[ca]\ndefault_ca=CA_default\n[CA_default]\ndatabase={root}/{name}-index.txt\nserial={root}/{name}-serial.txt\nnew_certs_dir={root}\ncertificate={root}/client-ca.pem\nprivate_key={root}/client-ca.key\ndefault_md=sha256\npolicy=policy_any\n[policy_any]\ncommonName=supplied\n"
+        )).unwrap();
+        openssl(&["ca","-batch","-config",text_path(&ca_conf),"-in",text_path(&csr),
+            "-out",text_path(&cert),"-startdate",start,"-enddate",end,
+            "-extfile",text_path(&ext),"-extensions","identity","-notext"]);
         private(&key);
     }
     fn start(&self) -> Running {
@@ -157,7 +192,11 @@ fn tdd_verified_mtls_principal_token_intersection_allows_rw_and_prevents_escalat
 #[test]
 fn tdd_mtls_verified_identity_rejects_wrong_ca_eku_missing_multiple_ambiguous_san() {
     let f=Fixture::new(); let server=f.start();
-    for identity in ["untrusted-writer","wrongeku","nosan","multisan","badcase","stranger"] {
+    for identity in [
+        "untrusted-writer", "wrongeku", "expired", "future",
+        "nosan", "multisan", "badcase", "stranger",
+        "query", "wrongprefix", "percent",
+    ] {
         assert!(f.connect(server.addr, identity, &RW).is_err(),
             "untrusted or ambiguous client identity accepted: {identity}");
     }
