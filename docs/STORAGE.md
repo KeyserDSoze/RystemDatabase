@@ -66,8 +66,11 @@ The fault points **simulate the error return without forcing the underlying file
 ## Writer-lock contention/replay regression evidence (#19/#64)
 
 The storage uses a **permanent** `rystemdb.writer.lock` inode and Rust
-`File::try_lock`, with explicit unlock in `DocumentStore::drop`. Lock
-ownership is advisory and OS-dependent. The original single Linux-only flaky
+`File::try_lock`. A small `WriterLockGuard` now explicitly unlocks in its
+destructor on both a normal `DocumentStore` close **and every early error**
+during opening/replay (#66). The lock guard is established immediately after
+the OS lock succeeds and is the store's last field. Lock ownership is
+advisory and OS-dependent. The original single Linux-only flaky
 test on 2026-11-21 did **not** print the underlying reopen error; subsequent
 tests report `StoreError` explicitly and cover 50 sequential same-process
 contenders, 40 immediate synced-write reopenings and 12 independent-process
@@ -83,6 +86,16 @@ synced final frame makes `DocumentStore::open` fail *after acquiring the
 lock*. Restoring only the test fixture's byte immediately permits a new
 writer to replay the acknowledged value. No corruption is ignored in the
 storage implementation.
+
+The [macOS CI run #45059826197](https://github.com/KeyserDSoze/RystemDatabase/actions/runs/45059826197)
+produced **actual error `Locked`** on the *immediate reopen* after an
+intentionally corrupt replay, despite the failed open returning
+`StoreError::Corrupt`. Prior to #66, `DocumentStore::drop` explicitly unlocked
+only successful opens; early `?` exits during replay left the acquired lock
+to implicit file-handle close. The RAII guard fixes that error path without
+modifying the advisory locking algorithm, weakening corruption rejection,
+removing the lockfile or adding retries. The older isolated Linux incident
+has not been independently proven to have the same cause.
 
 The Linux CI Rust job independently repeats the isolated lock regressions
 **six times** and fails on any iteration; the ordinary Rust and fault-injection

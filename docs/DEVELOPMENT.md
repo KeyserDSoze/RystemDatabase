@@ -213,3 +213,25 @@ key pair from a..z. A conforming canonical document keeps its previous bytes;
 source-only decoders now reject previously accepted out-of-order input.
 See [RDB_TYPED_PROTOCOL.md](RDB_TYPED_PROTOCOL.md) and ADR 0010.
 Parent #43/#38/#11 remain OPEN for broader codec, fuzz and protocol work.
+
+## Early replay failure writer-lock release (#66, child #19)
+
+The macOS [CI run #45059826197](https://github.com/KeyserDSoze/RystemDatabase/actions/runs/45059826197)
+reproduced an intermittent error: after an intentionally corrupt frame caused
+`DocumentStore::open` to fail during replay, **an immediate reopen returned
+`StoreError::Locked`**. Unlike prior Linux diagnostics, this captured the
+actual error and a concrete failure path. The storage now wraps the *acquired*
+writer-lock `File` in a `WriterLockGuard` immediately after `try_lock`
+succeeds. Its `Drop` calls `File::unlock` on both successful store drop and
+early-corrupt or I/O replay returns. There is no retry, lockfile deletion or
+weakened corruption validation.
+
+```sh
+cargo test --locked -p rystemdb-storage --test storage_contract tdd_corrupt_replay_open_does_not_stick_writer_lock_after_repair
+cargo test --locked -p rystemdb-storage --test storage_contract tdd_concurrent_contenders_leave_exactly_one_writer_and_immediate_reopen
+```
+
+The full Rust/fault-injection, Node/.NET and Docker CI still runs across all
+three OSes; Linux also repeats the lock-specific gate six times. Parent #19
+remains open until its original *Linux* flake's root cause is independently
+attributed; one macOS reproduction cannot prove both incidents identical.
