@@ -148,3 +148,18 @@ and denied CRUD under intersected certificate/token ACLs.
 ```sh
 cargo test --locked -p rystemdb-cli --test rpc_mtls_identity
 ```
+
+## Strict SAN edge-case TDD (#62)
+
+```sh
+cargo test --locked -p rystemdb-cli --bin rystemdb mtls_san
+cargo test --locked -p rystemdb-cli --test rpc_mtls_identity
+```
+
+A strict, bounded DER *structure* check on the already-Rustls-verified client
+leaf rejects invalid/multiple SAN entries, rather than relying on WebPKI's
+`valid_uri_names` iterator, which deliberately filters malformed URI bytes.
+The tests generate real ephemeral client identities with raw SAN extension
+values using OpenSSL (`openssl` must be on `PATH`) plus deterministic malformed
+DER mutation vectors; no private client keys are committed. This remains
+an experimental **loopback-only** feature, without remote security sign-off.

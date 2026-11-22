@@ -77,3 +77,24 @@ Remain open: production-grade revocation/rotation and audit, additional
 strict malformed-name conformance, Windows ACL checks, rate/DoS protection,
 non-loopback threat model, .NET/Node client-certificate provisioning (#55/#39).
 This ADR does not approve remote listening or publish SDK artifacts.
+
+## Strict single-URI SAN profile and bounded DER guard (#62)
+
+The already verified peer **leaf** is inspected with a bounded, complete
+TLV traversal of the DER Certificate/TBSCertificate/extensions path rather
+than a blind byte scan. The application requires a v3 TBS certificate, a
+single extension OID 2.5.29.17 and exactly one URI [6] GeneralName. This
+closed profile intentionally **rejects additional DNS, IP, otherName and
+extra URI SANs**, even if one URI is otherwise canonical. The guard rejects
+truncated, overlong/indefinite and nonminimal lengths, duplicate SAN OIDs,
+invalid UTF-8, unsupported high tag numbers, unexpected trailing data and
+DER leafs beyond 64 KiB; at most 64 X.509 extensions are traversed. The
+exact name must also match `rustls-webpki`'s independent parsed URI value.
+
+This structural guard does **not** check cryptographic validity, signatures,
+issuer trust, time or EKU: only Rustls with WebPkiClientVerifier does, and
+it runs **before** this guard. Tests include synthetically malformed DER,
+deterministic byte mutations and real CA-signed, OpenSSL-generated ephemeral
+bad-client SANs across all three OS. There is no private identity key
+committed to Git; the checks are not a formal security audit and do not
+approve remote binding or a production PKI.

@@ -212,6 +212,36 @@ mod tests {
     }
 
     #[test]
+    fn bounded_der_mutation_corpus_rejects_changed_prefixes_and_unexpected_names() {
+        let source = cert_for_names(&[uri(WRITER)]);
+        // All 256 values for every byte of the fixed URI namespace prefix:
+        // byte-for-byte identity must never silently normalize or alias.
+        let start = source.windows(WRITER.len())
+            .position(|w| w == WRITER).unwrap();
+        let prefix = b"spiffe://rystemdb.local/client/";
+        for pos in 0..prefix.len() {
+            for replacement in 0u8..=255 {
+                if replacement == prefix[pos] { continue; }
+                let mut mutated = source.clone();
+                mutated[start + pos] = replacement;
+                assert!(exact_uri_san(&mutated).is_none(),
+                    "mutated namespace byte {pos} unexpectedly authorized");
+            }
+        }
+        // A second GeneralName must never be ignored, including invalid
+        // classes, tags or a byte that cannot be decoded as UTF-8.
+        for tag in 0u8..=255 {
+            let cert = cert_for_names(&[uri(WRITER), tlv(tag, &[0xff])]);
+            assert!(exact_uri_san(&cert).is_none(),
+                "an extra GeneralName tag {tag:#x} was ignored");
+        }
+        // Oversized identity data and DER length wraps fail closed.
+        let cert = cert_for_names(&[uri(b"spiffe://rystemdb.local/client/")]);
+        assert!(exact_uri_san(&cert).is_none());
+        assert!(exact_uri_san(&[0x30,0x83,0xff,0xff,0xff]).is_none());
+    }
+
+    #[test]
     fn red_rejects_noncanonical_der_lengths_and_high_tag_numbers() {
         let mut bad = cert_for_names(&[uri(WRITER)]);
         // Convert root short-form length to a deliberately overlong encoding.

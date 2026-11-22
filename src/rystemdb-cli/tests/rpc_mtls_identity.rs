@@ -91,6 +91,10 @@ impl Fixture {
         f.create_raw_san_identity("raw-missing-uri", &Self::raw_names(&[
             { let mut dns=vec![0x82, 9]; dns.extend_from_slice(b"localhost");dns }
         ]));
+        f.create_raw_san_identity("raw-truncated", &[0x30,0x03,0x86,0x04,0xff]);
+        f.create_raw_san_identity("raw-constructed", &Self::raw_names(&[
+            vec![0xa6,1,0x01]
+        ]));
         f
     }
     fn path(&self, file: &str) -> PathBuf { self.root.join(file) }
@@ -140,7 +144,7 @@ impl Fixture {
         )).unwrap();
         openssl(&["req","-new","-newkey","rsa:2048","-nodes",
             "-keyout",text_path(&key),"-out",text_path(&csr),
-            "-subj","/CN=spiffe://rystemdb.local/client/writer"]);
+            "-subj","/CN=writer"]);
         let ca=self.path("client-ca.pem");let ca_key=self.path("client-ca.key");
         openssl(&["x509","-req","-in",text_path(&csr),
             "-CA",text_path(&ca),"-CAkey",text_path(&ca_key),
@@ -248,7 +252,7 @@ fn tdd_mtls_verified_identity_rejects_wrong_ca_eku_missing_multiple_ambiguous_sa
         "nosan", "multisan", "badcase", "stranger",
         "query", "wrongprefix", "percent",
         "raw-invalid-utf8", "raw-double", "raw-uri-and-dns",
-        "raw-missing-uri",
+        "raw-missing-uri", "raw-truncated", "raw-constructed",
     ] {
         assert!(f.connect(server.addr, identity, &RW).is_err(),
             "untrusted or ambiguous client identity accepted: {identity}");

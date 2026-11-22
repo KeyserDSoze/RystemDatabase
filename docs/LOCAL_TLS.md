@@ -113,7 +113,7 @@ Node uses `node:tls`, `minVersion: "TLSv1.3"`, `maxVersion: "TLSv1.3"`, `rejectU
 
 **These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. Source-only Rust mTLS exists on loopback, but there is no .NET/Node mTLS client-certificate provisioning, centralized identities, certificate/key rotation, revocation workflow, secure connection pools, released NuGet/npm SDK packages or service discovery. [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remains open.
 
-## mTLS principal policy and verified URI SAN authorization (#57/#58/#61)
+## mTLS principal policy and verified URI SAN authorization (#57/#58/#61/#62)
 
 An explicit versioned client-principal policy is recognized by the CLI. With
 only `--mtls-policy`, startup still refuses safely. Supplying BOTH
@@ -149,9 +149,17 @@ are rejected without echoing principals in errors.
 
 The server reads only the **verified peer end-entity leaf** obtained from
 Rustls after completing the mandatory TLS1.3 client-certificate handshake.
-It uses the pre-existing `rustls-webpki` X.509 parser to extract URI SAN
-values, requires exactly one canonical URI principal and exact rules
-(no case folding or percent decoding), then computes the strict
+It first uses a **bounded, strict DER structural check** (`mtls_san.rs`) to
+find the SubjectAlternativeName extension by navigating the verified leaf's
+TBSCertificate; no arbitrary OID scanning. The SAN must contain **exactly one
+GeneralName**, of primitive URI type ([6]/0x86), with an exact canonical
+`spiffe://rystemdb.local/client/<id>` name. Certificates containing extra
+DNS/IP/other names, malformed/undecodable URIs, duplicate SAN extensions,
+nonminimal lengths, trailing bytes or oversized DER fail closed. The name is
+also cross-checked against the independently parsed `rustls-webpki` URI
+iterator after Rustls verifies chain, validity and clientAuth EKU. The
+server then applies exact principal policy matching (no normalization)
+and computes the strict
 **certificate principal ACL ∩ bearer-token ACL** during HELLO. Unknown or
 ambiguous principals fail closed. No document read/write is performed if
 either credential or the required collection right is absent.
@@ -216,3 +224,17 @@ process typed CRUD and extensive negative identities using ephemeral OpenSSL
 test-only certificates, plus `rpc_mtls_sdk` for transport and invalid tokens.
 Legacy `connect_tls` remains functional; no remote addresses or automatic
 fallback are allowed.
+
+### Strict URI SAN DER structural regression (#62)
+
+`cargo test --locked -p rystemdb-cli --bin rystemdb mtls_san` exercises
+bounded structural DER rejection, duplicate OIDs, truncated/indefinite or
+noncanonical length encodings, high tags, extra GeneralNames, bad URI grammar,
+and a deterministic byte-mutation corpus. `rpc_mtls_identity` also signs
+real X.509 client certificates **ephemerally via OpenSSL** with an invalid
+UTF-8 URI next to the valid identity, multiple URI names, DNS-only/extra DNS,
+constructed or truncated SAN data and validates the real CLI's deny result.
+The stricter source-only identity profile accepts a certificate SAN containing
+**only one URI GeneralName**; it intentionally rejects a URI+DNS certificate.
+Never treat this structural guard as a replacement for Rustls' actual X.509
+cryptographic verification, or as a formal audit of production PKI/remote TLS.

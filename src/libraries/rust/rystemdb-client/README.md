@@ -62,7 +62,9 @@ security. TLS key contents, filenames and bearer-token bytes are never logged.
 The real `rpc-serve --mtls-policy ... --mtls-ca ...` listener now
 permits HELLO and CRUD **only when** a trusted client leaf contains exactly
 one canonical, exact-match `spiffe://rystemdb.local/client/<id>` URI SAN
-whose principal ACL grants intersect with a valid, independent 32-byte bearer
+and **no additional DNS/IP/URI/other SAN entries**, enforced by the
+bounded strict DER guard on a Rustls-verified client leaf (#62), whose
+principal ACL grants intersect with a valid, independent 32-byte bearer
 token ACL. A read-only certificate cannot gain write permission from an RW
 token; unknown principals, wrong issuers/EKU and wrong tokens are denied.
 `rpc_mtls_identity` verifies this using a real Rust server and freshly
