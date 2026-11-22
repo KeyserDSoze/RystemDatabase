@@ -3,7 +3,7 @@ use rystemdb_core::{decode as decode_doc, encode as encode_doc, Value};
 use rystemdb_protocol::{crud, read_frame, write_frame, Frame, Operation};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -211,4 +211,47 @@ fn tdd_nonloopback_listener_is_still_forbidden_even_with_valid_credentials() {
         assert!(!output.status.success());
         assert!(!data.exists(),"external bind created database");
     }
+}
+
+
+// #72 RED: a valid RSWP HELLO header may declare a huge body while sending
+// absolutely none. Before authenticating, a peer must not reserve a 16 MiB
+// buffer or pin a scarce worker until the normal 3-second timeout. Require
+// immediate connection teardown from a REAL Rust CLI TCP process.
+#[test]
+fn tdd_oversized_pre_auth_hello_header_closes_without_waiting_for_body() {
+    let dir = Temp::new();
+    let policy = dir.dir().join("acl.txt");
+    credentials(&policy);
+    let server = Running::start(&dir.dir().join("store"), &policy);
+
+    for (pass, declared_len) in [37_u32, 16 * 1024 * 1024].into_iter().enumerate() {
+        let mut socket = server.connect();
+        socket.set_read_timeout(Some(Duration::from_millis(1200))).unwrap();
+        // Only the 24-byte header is transmitted. Its magic, protocol
+        // version, kind, operation, status and header length are all valid.
+        let mut header = rystemdb_protocol::encode(
+            &Frame::request(Operation::Hello, 700 + pass as u64, vec![])
+        ).unwrap();
+        header[20..24].copy_from_slice(&declared_len.to_be_bytes());
+        assert_eq!(header.len(), rystemdb_protocol::HEADER_LEN);
+        socket.write_all(&header).unwrap();
+        let mut first = [0u8; 1];
+        match socket.read(&mut first) {
+            Ok(0) => {} // peer rejected the oversized unauthenticated header
+            Err(err) if matches!(err.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted) => {}
+            Ok(n) => panic!(
+                "pre-auth oversized HELLO declaration {declared_len} produced {n} unexpected response byte(s)"
+            ),
+            Err(err) => panic!(
+                "pre-auth HELLO declaration {declared_len} held a worker waiting for a missing body: {err:?}"
+            ),
+        }
+    }
+
+    // Refusing abusive headers must NOT break real authorized sessions.
+    let mut valid = server.connect();
+    assert_eq!(send(&mut valid, Operation::Hello, 801, hello(&READ_TOKEN)).status, 0);
+    assert_eq!(send(&mut valid, Operation::Ping, 802, vec![]).status, 0);
 }
