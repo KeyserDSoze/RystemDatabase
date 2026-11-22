@@ -93,9 +93,9 @@ fn tdd_rdb_aggregate_value_node_budget_rejects_dense_and_nested_expansion() {
     wire.extend_from_slice(&(MAX_NODES as u32).to_be_bytes());
     wire.extend(std::iter::repeat_n(0u8, MAX_NODES));
     assert_eq!(wire.len(), MAX_NODES + 10);
-    assert_eq!(decode(&wire), Err(rystemdb_core::CodecError::TooLarge),
+    assert!(matches!(decode(&wire), Err(rystemdb_core::CodecError::TooLarge)),
         "decoded a 256 KiB frame into over 262,144 typed heap value nodes");
-    assert_eq!(encode(&dense), Err(rystemdb_core::CodecError::TooLarge),
+    assert!(matches!(encode(&dense), Err(rystemdb_core::CodecError::TooLarge)),
         "encoder must not emit a frame the bounded decoder rejects");
 
     // Boundary: array root plus MAX_NODES-1 null children is still valid and
@@ -115,8 +115,8 @@ fn tdd_rdb_aggregate_value_node_budget_rejects_dense_and_nested_expansion() {
         nested_wire.extend_from_slice(&512u32.to_be_bytes());
         nested_wire.extend(std::iter::repeat_n(0u8, 512));
     }
-    assert_eq!(decode(&nested_wire), Err(rystemdb_core::CodecError::TooLarge),
+    assert!(matches!(decode(&nested_wire), Err(rystemdb_core::CodecError::TooLarge)),
         "nested containers bypassed aggregate node budget");
-    assert_eq!(encode(&nested), Err(rystemdb_core::CodecError::TooLarge),
+    assert!(matches!(encode(&nested), Err(rystemdb_core::CodecError::TooLarge)),
         "encoder accepted aggregate nested values over the limit");
 }

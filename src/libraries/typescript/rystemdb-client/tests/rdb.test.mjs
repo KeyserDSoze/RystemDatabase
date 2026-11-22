@@ -123,8 +123,10 @@ test("TDD #71: aggregate RDB node budget bounds dense and nested arrays", () => 
   const within = Array(MAX_NODES - 1).fill(null);
   const canonical = encodeRdb(within);
   assert.deepEqual(decodeRdb(canonical), within);
-  assert.deepEqual(canonical, dense.subarray(0, canonical.length)
-    .map((byte, i) => i === 9 ? 255 : byte));
+  assert.deepEqual(canonical.subarray(0, 6), dense.subarray(0, 6));
+  assert.equal(new DataView(canonical.buffer, canonical.byteOffset).getUint32(6, false),
+    MAX_NODES - 1, "boundary wire must declare exactly 262143 children");
+  assert.deepEqual(canonical.subarray(10), dense.subarray(10, canonical.length));
 
   const nested = Array.from({length: 512}, () => Array(512).fill(null));
   const nestedWire = new Uint8Array(10 + 512 * (5 + 512));
