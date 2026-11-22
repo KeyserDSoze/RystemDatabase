@@ -330,3 +330,31 @@ This deliberately tightens the unreleased experimental codec's accepted
 v1 documents. It is not full heap accounting or fuzzing, benchmarks,
 per-connection quota, disk format migration or production DoS assurance;
 track those on #43/#11/#39.
+
+
+## Pre-authentication RSWP header/worker budget regression (#72)
+
+```sh
+cargo test --locked -p rystemdb-protocol --test wire_contract tdd_bounded_stream_reader
+cargo test --locked -p rystemdb-cli --test rpc_auth tdd_oversized_pre_auth_hello_header
+```
+
+The real-process Rust test launches the actual local `rpc-serve --auth-file`
+listener on an ephemeral port, sends **only 24 bytes** of a syntactically
+valid HELLO header advertising **37 bytes and then 16 MiB** of payload,
+and requires a prompt connection close, before the 1.2-second test read
+deadline. Before the fix the server blocked waiting for missing body bytes.
+A fresh authenticated 36-byte HELLO and PING must then work. The
+independent protocol-level test proves the 36-byte boundary is accepted,
+a 37-byte declaration is rejected from the header without consuming
+any body bytes, canonical RSWP headers are still validated, and the
+normal 16 MiB authenticated `read_frame` API still accepts larger
+frames. The 8-worker/32-queue and TLS mTLS contracts remain unchanged.
+
+The server now invokes a caller-bounded reader with `max_payload=36`
+**until HELLO succeeds**; afterwards it uses the original 16 MiB
+framing reader. This does not prevent a peer from sending an incomplete
+24-byte header or only part of a 36-byte HELLO and holding a worker up to
+the existing three-second timeout. No changes to on-wire frame version,
+actual CRUD body schema, non-loopback binding or production authorization
+are claimed. Track rate limits/DoS and fuzzing under #39/#11.

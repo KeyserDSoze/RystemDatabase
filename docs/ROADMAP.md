@@ -44,6 +44,7 @@ GitHub Issues are the source of truth, not static checkboxes alone. [Browse open
 
 - [x] Create four `src/libraries` project folders: Rust, .NET, TypeScript and EF Core (#26–29)
 - [x] RSWP v1 fixed binary framing and Rust/.NET/TypeScript golden vector test infrastructure (#24/#27/#28, partial milestones)
+- [x] First-frame unauthenticated HELLO budget of 36 body bytes in Rust CLI (early reject oversized advertised frame without allocation/body read), preserving authenticated 16 MiB CRUD; real-process RED→GREEN (#72, partial #39)
 - [x] RSWP key-prefix v1 shared Rust codec in server/client, independent C#/TypeScript UTF-8 golden/negative tests (#42)
 - [x] Independent Rust/.NET/TypeScript native RDB value codec with nested arrays/bytes/references, i64, null and golden/error conformance (#43, partial)
 - [x] Aggregate 262,144-tagged-value node cap on RDB v1 encode and decode (Rust/.NET/Node); dense/nested expansion RED→GREEN tests (#71, partial #43/#11)

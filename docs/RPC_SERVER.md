@@ -20,6 +20,27 @@ Each request/response is an [RSWP v1 frame](WIRE_PROTOCOL.md): 24-byte fixed big
 
 Before anything else, the client sends `HELLO` (operation=1): legacy anonymous localhost payload `01 00`, or when `--auth-file` is enabled, `01 00 00 20` plus a **32-byte raw token**. Success responds `01 00`. A request before HELLO receives status `2` and closes; wrong/missing credentials in authenticated mode receive status `6` and close. Invalid wire version/oversized frames terminate the connection. [Auth-file policy, startup checks and per-collection ACL semantics](LOCAL_AUTH.md).
 
+**Pre-authentication read budget (#72):** the *first RSWP frame on each
+connection* is limited to **36 body bytes**, even though the global RSWP
+framing cap is 16 MiB. The 36-byte maximum fits exactly the explicit
+token HELLO; the unauthenticated loopback developer HELLO is 2 bytes.
+An unauthenticated client advertising 37 bytes or 16 MiB in the **24-byte
+header** is disconnected **before payload allocation and without reading a
+single body byte**. After a successful HELLO the server switches to the
+unchanged 16 MiB maximum for normal typed CRUD requests. The protocol
+magic/version/kind/op/status/header checks and 128-frame per-connection
+limit are unchanged. The source-only Rust, Node and .NET clients preserve
+their existing HELLO and CRUD framing.
+
+This is one resource-exhaustion mitigation, **not** comprehensive DoS
+protection: incomplete headers or incomplete bodies of **36 bytes or
+less** may still occupy a worker up to the existing 3-second timeout,
+and no per-principal fairness/quotas or runtime heap budget is guaranteed.
+The existing 8 workers and 32 queued sockets are still a limited local
+prototype; do not expose any non-loopback RPC listener. Full handshake
+timeouts, rate/backpressure limits, adversarial fuzzing and remote policy
+remain [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+
 `PING` (operation=2) accepts **empty** payload and returns an empty success payload. The prototype does not yet negotiate API capabilities, authentication, schema version or topology.
 
 ## Binary document CRUD payload v1 — local experimental contract

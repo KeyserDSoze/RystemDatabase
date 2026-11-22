@@ -34,6 +34,25 @@ For `PING`, request ID `7`, no payload:
 
 Rust, C# and TypeScript independent conformance tests assert these octets. All implementations must reject truncation and oversized payload length **before allocation**.
 
+### Server pre-authentication frame budget (#72)
+
+The RSWP v1 **wire format is unchanged**. Rust's
+`rystemdb_protocol::read_frame_with_limit(reader, max_payload)` reuses
+the exact v1 header validator and rejects any declared body length
+exceeding the caller-specified maximum **before allocating or reading
+body bytes**; it also enforces the normal global 16 MiB maximum.
+`read_frame(reader)` continues to allow 16 MiB on standard frames.
+
+The source-only Rust `rpc-serve` selects `max_payload=36` until its
+first valid HELLO/authentication succeeds: the 2-byte version HELLO and
+36-byte token HELLO still work, but a 37-byte header declaration is
+rejected without waiting for an absent body. Once greeted, it uses the
+original 16 MiB standard reader for typed CRUD. This is server-side
+framing control, **not** a protocol version change or a reduction of the
+authenticated CRUD payload allowance. Broader slowloris protections,
+per-identity quotas, TLS handshake resource controls and fuzz tests are
+still required before any external bind under #39.
+
 ## Provisional document payload v1 (local server on main)
 
 A **working local-only** Rust server uses binary HELLO/PING and PUT/GET/DELETE: [exact body layout, statuses and safety limits](RPC_SERVER.md). Request key: `u16 collection_len BE` + ASCII collection + `u16 id_len BE` + UTF-8 ID, plus one `RDB\\0` typed document payload for PUT. GET responds with binary `RDB\\0` value, never JSON. The CRUD key-prefix schema now has a **shared Rust decoder** and independent .NET/TypeScript golden vectors ([CRUD_KEY_PROTOCOL.md](CRUD_KEY_PROTOCOL.md), #42). The complete **typed RDB binary document suffix** and live Rust/.NET/TypeScript localhost client connections now have end-to-end test coverage, including [optional local-token HELLO and collection-specific authorization](LOCAL_AUTH.md). Stable negotiation, authenticated TLS remote transport, streaming and published SDK compatibility remain open (#38, #39, #43).
