@@ -99,10 +99,15 @@ export class RystemLocalClient {
    * do we send the RSWP bearer token. No rejectUnauthorized=false, no custom
    * certificate bypass, no plaintext fallback or external network access.
    *
-   * Production mTLS, remote routing and credential lifecycle are NOT available.
+   * Optional client cert + key opts into experimental loopback mTLS (#68).
+   * Native node:tls presents the client certificate and proves key ownership;
+   * the Rust server separately enforces the verified principal/token ACL.
+   * Both PEM credentials must be explicitly supplied together and bounded.
+   * Production remote mTLS/revocation/credential lifecycle remain unavailable.
    */
   static async connectTls(options: {
-    host: string; port: number; serverName: string; ca: string | Uint8Array; token: Uint8Array
+    host: string; port: number; serverName: string; ca: string | Uint8Array; token: Uint8Array;
+    cert?: string | Uint8Array; key?: string | Uint8Array
   }): Promise<RystemLocalClient> {
     if (!options || (options.host !== "127.0.0.1" && options.host !== "::1")) {
       throw new Error("Rystem TLS client requires a numeric loopback host");
@@ -121,6 +126,33 @@ export class RystemLocalClient {
         options.ca.length > 65536) {
       throw new Error("Rystem TLS client requires an explicit bounded root CA PEM");
     }
+    // #68: On the verified TLS entrypoint, never silently discard a
+    // supplied client identity or attempt a token-only mTLS handshake.
+    // No path or PEM key contents are passed to spawned processes or logs.
+    const haveCert = options.cert !== undefined;
+    const haveKey = options.key !== undefined;
+    if (haveCert !== haveKey) {
+      throw new Error("Client certificate and private key PEM must be provided together");
+    }
+    const boundedPem = (value: string | Uint8Array, label: string): Buffer => {
+      if (!(typeof value === "string" || value instanceof Uint8Array)) {
+        throw new Error("Invalid client " + label + " PEM");
+      }
+      const raw = Buffer.from(value);
+      if (!raw.length || raw.length > 65536) {
+        throw new Error("Invalid or oversized client " + label + " PEM");
+      }
+      const text = raw.toString("utf8");
+      const expected = label === "certificate" ?
+        /-----BEGIN CERTIFICATE-----\r?\n[\s\S]+-----END CERTIFICATE-----/ :
+        /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----\r?\n[\s\S]+-----END (?:RSA |EC )?PRIVATE KEY-----/;
+      if (!expected.test(text)) {
+        throw new Error("Malformed client " + label + " PEM");
+      }
+      return raw;
+    };
+    const clientCert = haveCert ? boundedPem(options.cert!, "certificate") : undefined;
+    const clientKey = haveKey ? boundedPem(options.key!, "private key") : undefined;
     const root = typeof options.ca === "string" ? options.ca : Buffer.from(options.ca);
     const token = Uint8Array.from(options.token);
     const socket: TLSSocket = connectTlsSocket({
@@ -128,6 +160,7 @@ export class RystemLocalClient {
       port: options.port,
       servername: options.serverName,
       ca: root,
+      ...(clientCert ? {cert: clientCert, key: clientKey} : {}),
       minVersion: "TLSv1.3",
       maxVersion: "TLSv1.3",
       rejectUnauthorized: true,
