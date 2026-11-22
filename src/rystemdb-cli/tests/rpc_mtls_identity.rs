@@ -265,3 +265,30 @@ fn tdd_mtls_verified_identity_rejects_wrong_ca_eku_missing_multiple_ambiguous_sa
         &f.path("root-ca.pem"),&RW).is_err(),
         "mTLS server accepted token without a client certificate");
 }
+
+#[test]
+fn tdd_signed_duplicate_san_extension_is_rejected_by_real_mtls_server() {
+    let f=Fixture::new();
+    // This creates a REAL client CA-signed X.509 leaf with two separate
+    // extension OIDs 2.5.29.17, not just two URIs in one SAN. An independent
+    // DER inspection and RSA signature check must succeed before connecting.
+    let evidence=f.create_signed_duplicate_san_identity("duplicate-signed");
+    assert_eq!(evidence.san_extension_count, 2);
+    assert!(evidence.signature_valid, "duplicate-SAN test leaf must be signed by ephemeral CA");
+
+    let server=f.start();
+    let mut valid=f.connect(server.addr,"writer",&RW)
+        .expect("valid single-SAN writer should continue to authenticate");
+    valid.put("orders","duplicate-probe",&typed_document()).unwrap();
+    assert_eq!(valid.get("orders","duplicate-probe").unwrap(),Some(typed_document()));
+
+    // Certificate signed by the trusted client CA with matching key and
+    // canonical writer URI MUST NOT authorize HELLO if an extra SAN
+    // extension is present. A local PEM/key configuration error is not a
+    // substitute for testing server-side TLS certificate validation.
+    let result=f.connect(server.addr,"duplicate-signed",&RW);
+    assert!(!matches!(result, Ok(_) | Err(ClientError::TlsConfig)),
+        "duplicate SAN OID reached RSWP, or client did not present the signed test certificate");
+    assert!(valid.delete("orders","duplicate-probe").unwrap());
+    assert_eq!(valid.get("orders","duplicate-probe").unwrap(),None);
+}
