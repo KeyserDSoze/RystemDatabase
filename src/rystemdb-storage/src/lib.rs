@@ -75,8 +75,9 @@ pub struct DocumentStore {
     segment_limit: u64,
     entries: BTreeMap<String, Location>,
     poisoned: bool,
-    // Last field drops last; the OS releases the advisory lock on process death.
-    _writer_lock: File,
+    // Last field drops last. The guard unlocks explicitly even on early
+    // initialization errors; the OS is the fallback on abrupt process death.
+    _writer_lock: WriterLockGuard,
 }
 
 impl DocumentStore {
@@ -106,6 +107,12 @@ impl DocumentStore {
             Err(TryLockError::WouldBlock) => return Err(StoreError::Locked),
             Err(TryLockError::Error(err)) => return Err(StoreError::Io(err)),
         }
+        // #66: Every subsequent ? can return early (corrupt segments,
+        // truncated historical frames, replay I/O). A plain File close was
+        // observed leaving a transient Locked result on macOS after one
+        // failed replay open. Guard the *acquired* handle immediately so it
+        // explicitly unlocks even if DocumentStore is never constructed.
+        let writer_lock = WriterLockGuard(writer_lock);
         let mut ids = Vec::new();
         for dir_entry in fs::read_dir(&root)? {
             let dir_entry = dir_entry?;
@@ -325,15 +332,19 @@ fn inject_io_if(point: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
-// Explicitly release ownership at the end of the DocumentStore lifetime.
-// The OS would normally release an advisory lock on File drop as well, but
-// explicit unlock ensures the lock is relinquished before other fields
-// are automatically closed. The lockfile itself is deliberately retained.
-impl Drop for DocumentStore {
+// #66: The lock's lifetime begins *before* replay, and must not depend
+// on successfully constructing DocumentStore. This guard's Drop runs after
+// both a normal store close and any early-Err from the open/replay path.
+// Keep the lock-file inode (do not remove it) and drop the guard last so
+// other open segment handles are already closed before releasing ownership.
+#[derive(Debug)]
+struct WriterLockGuard(File);
+
+impl Drop for WriterLockGuard {
     fn drop(&mut self) {
-        if let Err(err) = self._writer_lock.unlock() {
-            // Drop cannot return an error. Emit a diagnostic; closing the File
-            // is still the OS fallback for releasing the advisory lock.
+        if let Err(err) = self.0.unlock() {
+            // Never panic in Drop. File close is the fallback; log no
+            // sensitive data and do not pretend that unlock succeeded.
             eprintln!("Rystem Database: error unlocking writer lock: {err}");
         }
     }
