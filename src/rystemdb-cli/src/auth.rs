@@ -24,6 +24,7 @@ pub(super) struct Grant {
 impl Grant {
     // Future verified-principal ACL intersection with independent HELLO token
     // grants. An absent or disjoint permission never produces an allow rule.
+    #[allow(dead_code)] // #56: wired only after verified URI SAN principal extraction
     pub(super) fn intersect(token: &[Grant], identity: &[Grant]) -> Vec<Grant> {
         let mut result = Vec::new();
         for t in token {
