@@ -145,6 +145,7 @@ if (args.Length > 0)
 {
     await LiveContract.RunAsync(args[0]);
     await TlsContract.RunAsync(args[0]);
+    await MtlsContract.RunAsync(args[0]);
 }
 
 
