@@ -110,3 +110,49 @@ fn tdd_mtls_trust_root_and_flags_fail_closed_before_storage_creation() {
         assert!(!data.exists(), "unsafe mTLS startup created storage: {name}");
     }
 }
+
+#[test]
+fn tdd_mtls_client_ca_is_parsed_before_store_and_rejects_unsafe_pem() {
+    let f = Fixture::new();
+    f.auth();
+    let invalid_pem = f.file("invalid-ca.pem");
+    fs::write(&invalid_pem, b"this is not a certificate").unwrap();
+    let oversized = f.file("oversized-ca.pem");
+    fs::write(&oversized, vec![b'x'; 65 * 1024]).unwrap();
+    for (case, ca) in [
+        ("missing", f.file("missing-root.pem")),
+        ("non-certificate", invalid_pem),
+        ("private-key-not-ca", f.file("server-key.pem")),
+        ("oversized", oversized),
+    ] {
+        let data = f.file(&format!("reject-ca-{case}"));
+        let out = Command::new(env!("CARGO_BIN_EXE_rystemdb"))
+            .args(["rpc-serve", "--data"]).arg(&data)
+            .args(["--listen", "127.0.0.1:0", "--auth-file"]).arg(f.file("auth"))
+            .arg("--tls-cert").arg(f.file("server-cert.pem"))
+            .arg("--tls-key").arg(f.file("server-key.pem"))
+            .arg("--mtls-policy").arg(f.file("mtls-policy"))
+            .arg("--mtls-ca").arg(ca)
+            .output().unwrap();
+        assert!(!out.status.success(), "malformed client trust root accepted: {case}");
+        assert!(!data.exists(), "invalid CA caused storage creation: {case}");
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("BEGIN PRIVATE KEY"),
+            "secret key contents leaked to stderr");
+    }
+    #[cfg(unix)] {
+        use std::os::unix::fs::symlink;
+        let data = f.file("reject-ca-symlink");
+        let link = f.file("linked-ca.pem");
+        symlink(f.public_certs.join("root-ca.pem"), &link).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_rystemdb"))
+            .args(["rpc-serve", "--data"]).arg(&data)
+            .args(["--auth-file"]).arg(f.file("auth"))
+            .arg("--tls-cert").arg(f.file("server-cert.pem"))
+            .arg("--tls-key").arg(f.file("server-key.pem"))
+            .arg("--mtls-policy").arg(f.file("mtls-policy"))
+            .arg("--mtls-ca").arg(link)
+            .output().unwrap();
+        assert!(!out.status.success(), "symlinked trust root accepted");
+        assert!(!data.exists());
+    }
+}
