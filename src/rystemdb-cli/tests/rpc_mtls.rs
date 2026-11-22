@@ -7,6 +7,9 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 const READ_WRITE_TOKEN: [u8; 32] = [0x11; 32];
 
@@ -14,7 +17,8 @@ struct Fixture { root: PathBuf, public_certs: PathBuf }
 impl Fixture {
     fn new() -> Self {
         let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("rystem-mtls-gate-{}-{time}", std::process::id()));
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("rystem-mtls-gate-{}-{time}-{id}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let public_certs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tls");
         fs::copy(public_certs.join("server-cert.pem"), root.join("server-cert.pem")).unwrap();
