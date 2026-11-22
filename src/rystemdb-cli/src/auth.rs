@@ -22,6 +22,28 @@ pub(super) struct Grant {
 }
 
 impl Grant {
+    // Future verified-principal ACL intersection with independent HELLO token
+    // grants. An absent or disjoint permission never produces an allow rule.
+    pub(super) fn intersect(token: &[Grant], identity: &[Grant]) -> Vec<Grant> {
+        let mut result = Vec::new();
+        for t in token {
+            for p in identity {
+                if t.collection == p.collection {
+                    let read = t.can_read && p.can_read;
+                    let write = t.can_write && p.can_write;
+                    if read || write {
+                        result.push(Grant {
+                            collection: t.collection.clone(),
+                            can_read: read,
+                            can_write: write,
+                        });
+                    }
+                }
+            }
+        }
+        result
+    }
+
     pub(super) fn allows(&self, collection: &str, operation: Operation) -> bool {
         if self.collection != collection {
             return false;
@@ -256,6 +278,33 @@ mod tests {
         assert!(!valid_collection("*"));
         assert!(!valid_collection("../secret"));
     }
+    #[test]
+    fn mtls_permission_intersection_cannot_escalate_token_or_principal() {
+        let token = vec![Grant {
+            collection: "orders".into(), can_read: true, can_write: true,
+        }];
+        let principal_read = vec![Grant {
+            collection: "orders".into(), can_read: true, can_write: false,
+        }];
+        let restricted = Grant::intersect(&token, &principal_read);
+        assert_eq!(restricted.len(), 1);
+        assert!(restricted[0].allows("orders", Operation::Get));
+        assert!(!restricted[0].allows("orders", Operation::Put));
+        assert!(!restricted[0].allows("orders", Operation::Delete));
+        assert!(!restricted[0].allows("users", Operation::Get));
+
+        let only_write = vec![Grant {
+            collection: "orders".into(), can_read: false, can_write: true,
+        }];
+        assert!(Grant::intersect(&only_write, &principal_read).is_empty());
+        let other_collection = vec![Grant {
+            collection: "users".into(), can_read: true, can_write: true,
+        }];
+        assert!(Grant::intersect(&token, &other_collection).is_empty());
+        assert!(Grant::intersect(&token, &[]).is_empty());
+        assert!(Grant::intersect(&[], &principal_read).is_empty());
+    }
+
     #[test]
     fn mtls_principal_acl_is_canonical_and_exact() {
         let policy = "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/reader orders r\nspiffe://rystemdb.local/client/writer orders rw\n";

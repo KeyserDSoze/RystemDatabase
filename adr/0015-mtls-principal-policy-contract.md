@@ -39,3 +39,15 @@ Rust/.NET/Node clients and a revocation/rotation design under #55/#39.
 The fixed trust-domain namespace is experimental and will require a versioned
 migration rather than silent reassignment if remote identity policy changes.
 No remote listener, public mTLS release or production security claim follows.
+
+## Incremental client-certificate verifier gate (#58)
+
+An additional `--mtls-ca` file, only valid together with the explicit
+`--mtls-policy`, `--auth-file` and TLS certificate/key, pins a set of client
+CA root certificates. Rustls WebPkiClientVerifier requires real X.509 client
+authentication on **loopback TLS1.3 only**. The listener fails all RSWP
+requests, including HELLO, even after certificate verification: certificate
+principal URI SAN extraction and ACL intersection are not yet active. This
+prevents accidental use of bearer tokens to escalate a merely TLS-verified
+client. No private test client keys are committed to the repository in this
+milestone. All existing TLS-only and plaintext localhost entry points remain.

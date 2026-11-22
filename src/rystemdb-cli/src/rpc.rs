@@ -30,8 +30,8 @@ const UNAUTHORIZED: u16 = 6;
 /// Starts the loopback-only binary service. The default health-only HTTP server
 /// remains a separate CLI command and keeps its original behavior.
 pub fn run(args: &[String]) -> Result<(), String> {
-    let (mut data, mut listen, mut auth_file, mut tls_cert, mut tls_key, mut mtls_policy) =
-        (None, None, None, None, None, None);
+    let (mut data, mut listen, mut auth_file, mut tls_cert, mut tls_key, mut mtls_policy, mut mtls_ca) =
+        (None, None, None, None, None, None, None);
     let mut pos = 0;
     while pos < args.len() {
         let flag = args[pos].as_str();
@@ -43,6 +43,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--tls-cert" => &mut tls_cert,
             "--tls-key" => &mut tls_key,
             "--mtls-policy" => &mut mtls_policy,
+            "--mtls-ca" => &mut mtls_ca,
             _ => return Err(format!("unknown rpc-serve argument: {flag}")),
         };
         if target.replace(value.as_str()).is_some() {
@@ -61,13 +62,25 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
 
     // An mTLS principal policy must NEVER silently enable a bearer-only TLS
-    // server. Validate the canonical, private policy file before any storage
-    // creation, then deliberately reject until verified client X.509 URI SAN
-    // identities and permission intersection are actually implemented.
-    if let Some(path) = mtls_policy {
-        load_mtls_principal_policy(Path::new(path))?;
-        return Err("mTLS client certificate authentication is not yet enabled".into());
-    }
+    // server. Validate before opening storage or binding to any address.
+    // A CA without the principal ACL is also forbidden.
+    let mtls_ca = match (mtls_policy, mtls_ca) {
+        (Some(policy_path), Some(ca_path)) => {
+            load_mtls_principal_policy(Path::new(policy_path))?;
+            if auth_file.is_none() || tls_cert.is_none() || tls_key.is_none() {
+                return Err("mTLS requires --auth-file, --tls-cert and --tls-key".into());
+            }
+            Some(Path::new(ca_path))
+        }
+        (Some(policy_path), None) => {
+            // Preserve #57's fail-closed validation-only contract.
+            load_mtls_principal_policy(Path::new(policy_path))?;
+            return Err("mTLS client certificate authentication is not yet enabled".into());
+        }
+        (None, Some(_)) => return Err("mTLS requires --mtls-policy".into()),
+        (None, None) => None,
+    };
+    let mtls_required = mtls_ca.is_some();
 
     // Fail closed on invalid credentials/permissions BEFORE binding the socket
     // or opening/creating any database files.
@@ -84,7 +97,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("TLS mode requires --auth-file with explicit collection permissions".into());
     }
     let tls_config = match (tls_cert, tls_key) {
-        (Some(cert), Some(key)) => Some(tls::server_config(Path::new(cert), Path::new(key))?),
+        (Some(cert), Some(key)) => Some(tls::server_config(Path::new(cert), Path::new(key), mtls_ca)?),
         _ => None,
     };
     let listener = TcpListener::bind(addr).map_err(|err| format!("RPC bind failed: {err}"))?;
@@ -104,7 +117,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 receiver.recv()
             };
             let Ok(stream) = accepted else { break };
-            handle_client(stream, &db, policy.as_deref(), tls_config.as_ref());
+            handle_client(stream, &db, policy.as_deref(), tls_config.as_ref(), mtls_required);
         });
     }
     println!("Rystem Database experimental LOOPBACK RPC listening on {}",
@@ -126,7 +139,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
 }
 
 fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
-    policy: Option<&AuthPolicy>, tls: Option<&Arc<rustls::ServerConfig>>)
+    policy: Option<&AuthPolicy>, tls: Option<&Arc<rustls::ServerConfig>>,
+    mtls_required: bool)
 {
     if stream.set_read_timeout(Some(TIMEOUT)).is_err()
         || stream.set_write_timeout(Some(TIMEOUT)).is_err()
@@ -139,6 +153,26 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
             return;
         };
         let mut wrapped = rustls::StreamOwned::new(conn, stream);
+        if mtls_required {
+            // Cryptographic client chain/EKU/validity validation happens in
+            // rustls complete_io, before any RSWP frame or bearer token.
+            while wrapped.conn.is_handshaking() {
+                if wrapped.conn.complete_io(&mut wrapped.sock).is_err() {
+                    return;
+                }
+            }
+            if wrapped.conn.protocol_version() != Some(rustls::ProtocolVersion::TLSv1_3)
+                || wrapped.conn.peer_certificates().is_none_or(|certs| certs.is_empty())
+            {
+                return;
+            }
+            // The authenticated leaf's canonical URI SAN is NOT extracted yet.
+            // Do not process even HELLO on an unbound client identity. A
+            // certificate and token alone MUST NOT grant any collection right.
+            wrapped.conn.send_close_notify();
+            let _ = wrapped.flush();
+            return;
+        }
         let closing_after_reply = handle_client_frames(&mut wrapped, db, policy);
         if closing_after_reply {
             // After an explicit rejection status has been flushed, let the

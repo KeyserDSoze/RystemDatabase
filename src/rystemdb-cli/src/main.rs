@@ -22,7 +22,7 @@ Usage:\n\
   rystemdb document delete --data PATH --collection NAME --id ID\n\
   rystemdb serve [--listen 127.0.0.1:8787]\n\
   rystemdb rpc-serve --data PATH [--listen 127.0.0.1:8790] [--auth-file PRIVATE_PATH] [--tls-cert CERT --tls-key KEY]\n\
-  rystemdb rpc-serve --mtls-policy PRIVATE_PATH (validate only; always refuses to start)\n\
+  rystemdb rpc-serve --mtls-policy POLICY --mtls-ca CLIENT_CA (TLS verification gate; no RSWP authorization)\n\
   rystemdb --help\n\
 PUT accepts JSON from stdin (--json -) or a local file (--json FILE).\n\
 --typed-json explicitly interprets $rystem tagged references/bytes.\n\

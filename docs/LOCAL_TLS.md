@@ -115,11 +115,15 @@ Node uses `node:tls`, `minVersion: "TLSv1.3"`, `maxVersion: "TLSv1.3"`, `rejectU
 
 ## mTLS principal policy contract (#57 — validation only)
 
-An explicit versioned client-principal policy file is now recognized by the
-`rpc-serve --mtls-policy PRIVATE_PATH` command-line parser. **This mode ALWAYS
-refuses to start**, even if the policy is valid. It is a deliberately
-fail-closed schema/permissions validation milestone, **not mTLS support**.
-Never assume a server using `--mtls-policy` has verified a client certificate.
+An explicit versioned client-principal policy is recognized by the CLI. With
+only `--mtls-policy`, startup still refuses safely. Supplying BOTH
+`--mtls-policy PRIVATE_PATH` and `--mtls-ca CLIENT_ROOT_PEM`, together with
+`--auth-file` and `--tls-cert/--tls-key`, opts into an **experimental TLS1.3
+client-certificate verification gate** backed by Rustls WebPkiClientVerifier.
+The server verifies the client chain, EKU and validity before any application
+data. **Even a verified client is always denied RSWP requests** until verified
+URI SAN identity extraction + principal/token ACL intersection is implemented.
+This is not usable mTLS CRUD, production authentication or remote access.
 
 The first line must be `rystem-mtls-principal-acl-v1`. Each nonempty subsequent
 line must have exactly three ASCII fields separated by one space:
@@ -162,3 +166,22 @@ The bound limits resource occupancy by clients that never close; production
 rate limiting and security DoS review remain open under #39. The real-process
 Rust/.NET/Node rejection tests must observe actual RSWP status 6, never
 interpret EOF as a successful authorization denial.
+
+### Rustls verified client certificate gate (#58, not yet an mTLS database service)
+
+```sh
+rystemdb rpc-serve --data ./rystem-data --listen 127.0.0.1:8790 \
+  --auth-file ./private/token-acl \
+  --tls-cert ./private/server-cert.pem --tls-key ./private/server-key.pem \
+  --mtls-policy ./private/client-principals \
+  --mtls-ca ./private/client-root-ca.pem
+```
+
+This listener requires a certificate issued by the **explicit, independently
+selected** client root CA. Rustls checks trust, TLS1.3 and client-auth
+certificate validity/EKU before RSWP. However **it never grants RSWP HELLO,
+PING or document CRUD even to a verified certificate**: verified URI SAN
+identity extraction and applying the grant intersection are still work under
+#56. No token bypass, no name/CN-based authorization and no plaintext fallback
+exist in this mode. Legacy authenticated TLS localhost mode WITHOUT mTLS
+flags is unchanged. Do not use this gate as an operational database server.
