@@ -22,7 +22,7 @@ fn cli_help_distinguishes_http_health_from_loopback_binary_rpc() {
     assert!(help.contains("--tls-cert CERT --tls-key KEY"));
     assert!(help.contains("TLS 1.3 requires"));
     assert!(help.contains("--mtls-policy POLICY --mtls-ca CLIENT_CA"));
-    assert!(help.contains("no RSWP authorization"));
-    assert!(help.contains("No SQL, usable mTLS RPC"));
+    assert!(help.contains("URI principal/token intersection"));
+    assert!(help.contains("No SQL, production/remote mTLS"));
     assert!(help.contains("localhost-only"));
 }
