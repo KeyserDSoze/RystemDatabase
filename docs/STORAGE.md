@@ -63,6 +63,35 @@ In addition to abrupt process exits, `src/rystemdb-storage/tests/io_failure.rs` 
 
 The fault points **simulate the error return without forcing the underlying filesystem or hardware to genuinely fail**. They are compiled out of normal binaries, tested explicitly by the no-feature isolation test, and must never be enabled in shipped releases. This does **not** prove actual power-loss durability, Windows directory-entry behavior, or atomic multi-record transactions. See [ADR 0004](../adr/0004-io-failure-poisoning.md) and [test gate matrix](../tests/CRASH_GATE.md).
 
+## Writer-lock contention/replay regression evidence (#19/#64)
+
+The storage uses a **permanent** `rystemdb.writer.lock` inode and Rust
+`File::try_lock`, with explicit unlock in `DocumentStore::drop`. Lock
+ownership is advisory and OS-dependent. The original single Linux-only flaky
+test on 2026-11-21 did **not** print the underlying reopen error; subsequent
+tests report `StoreError` explicitly and cover 50 sequential same-process
+contenders, 40 immediate synced-write reopenings and 12 independent-process
+contention/replay cycles.
+
+Additional test-only characterizations (`#64`) exercise 16 rounds where
+**eight threads simultaneously** attempt to open the same store while the
+single writer holds the advisory lock: every contender must get
+`StoreError::Locked`. The owner then drops and a fresh writer immediately
+reopens and verifies its synchronized sentinel, **without retry**.
+A second test runs 24 iterations where a deliberately corrupted, previously
+synced final frame makes `DocumentStore::open` fail *after acquiring the
+lock*. Restoring only the test fixture's byte immediately permits a new
+writer to replay the acknowledged value. No corruption is ignored in the
+storage implementation.
+
+The Linux CI Rust job independently repeats the isolated lock regressions
+**six times** and fails on any iteration; the ordinary Rust and fault-injection
+matrix continues on all three OSes. These tests improve confidence but do
+**not prove the root cause** of the original intermittent Linux failure or
+guarantee lock correctness for all filesystems/adversarial processes.
+Parent [#19](https://github.com/KeyserDSoze/RystemDatabase/issues/19)
+remains open for root-cause investigation.
+
 ## Explicit limitations
 
 - **Advisory single-writer exclusion:** `rystemdb.writer.lock` is held with `File::try_lock` on the entire store lifetime, and released by the OS after normal or abrupt process exit. Two cooperative Rystem writers cannot open the same directory concurrently. Uncooperative tools or filesystems without reliable locks can still damage data.

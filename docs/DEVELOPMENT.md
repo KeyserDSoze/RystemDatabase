@@ -179,3 +179,20 @@ invalid leaf to the actual `rpc-serve` TLS1.3 listener. The standard server CA
 and hostname verification remains active. The server must deny RSWP HELLO;
 a canonical single-SAN writer must still complete typed CRUD. All keys remain
 in temporary test directories and are never committed.
+
+## Writer-lock repeat diagnosis (#19 / #64)
+
+```sh
+cargo test --locked -p rystemdb-storage --test storage_contract tdd_lock_ -- --test-threads=1
+cargo test --locked -p rystemdb-storage --test storage_contract tdd_concurrent_contenders_leave_exactly_one_writer_and_immediate_reopen
+cargo test --locked -p rystemdb-storage --test storage_contract tdd_corrupt_replay_open_does_not_stick_writer_lock_after_repair
+```
+
+The new tests verify concurrent failed lock attempts with a synchronized
+barrier and fail-closed replay errors after lock acquisition. They require
+an immediate, single-try reopening after all threads join or the test
+fixture is repaired. Linux CI repeats these exact checks six times as an
+additional regression gate, while the full Rust/fault-injection
+matrix remains on Linux, macOS and Windows. The original intermittent
+Linux reopen issue #19 remains OPEN: a green stress gate is evidence, not a
+conclusive root-cause diagnosis or production assurance.

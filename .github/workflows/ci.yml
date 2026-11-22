@@ -21,6 +21,17 @@ jobs:
         run: rustc --version
       - name: Check workspace and unit/integration tests
         run: cargo test --workspace --locked --all-targets
+      - name: Storage writer-lock contention/replay repeated Linux regression (#19/#64)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pass in 1 2 3 4 5 6; do
+            echo "Writer-lock regression pass ${pass}/6 (no retry within any test)"
+            cargo test --locked -p rystemdb-storage --test storage_contract tdd_lock_ -- --test-threads=1
+            cargo test --locked -p rystemdb-storage --test storage_contract tdd_concurrent_contenders_leave_exactly_one_writer_and_immediate_reopen -- --test-threads=1
+            cargo test --locked -p rystemdb-storage --test storage_contract tdd_corrupt_replay_open_does_not_stick_writer_lock_after_repair -- --test-threads=1
+          done
       - name: Storage failure and process-crash recovery matrix (feature-gated)
         run: cargo test -p rystemdb-storage --locked --features fault-injection --tests -- --test-threads=1
       - name: Clippy (default production features)
