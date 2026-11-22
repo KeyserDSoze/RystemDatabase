@@ -184,14 +184,41 @@ pub(super) fn create(
     assert_eq!(san_extension_count, 2,
         "signed fixture must contain exactly two distinct SAN extension OIDs");
 
-    // An actual X.509 PEM decoder must still be able to load the resulting
-    // certificate: otherwise an unrelated malformed outer encoding, rather
-    // than duplicate SAN extension enforcement, could cause rejection.
-    run_openssl(&[
-        "x509", "-inform", "DER", "-in", utf8_path(&signed_der_path),
-        "-out", utf8_path(duplicate_pem),
-    ]);
-    run_openssl(&["x509", "-in", utf8_path(duplicate_pem), "-noout", "-subject"]);
+    // Some X.509 inspection tools (notably macOS LibreSSL) correctly
+    // refuse *decoding* this invalid duplicate-extension certificate. Do
+    // not let a local OpenSSL x509 parse failure substitute for a real
+    // rustls-server handshake test. Write standard PEM encoding without
+    // asking OpenSSL to accept or normalize the malformed extension OIDs.
+    const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut b64 = String::new();
+    for group in signed_leaf.chunks(3) {
+        let mut value = u32::from(group[0]) << 16;
+        if group.len() > 1 { value |= u32::from(group[1]) << 8; }
+        if group.len() > 2 { value |= u32::from(group[2]); }
+        for digit in 0..4 {
+            if digit > group.len() {
+                b64.push('=');
+            } else {
+                let index = ((value >> (18 - 6 * digit)) & 63) as usize;
+                b64.push(char::from(B64[index]));
+            }
+        }
+    }
+    let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+    for line in b64.as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(line).unwrap());
+        pem.push('\n');
+    }
+    pem.push_str("-----END CERTIFICATE-----\n");
+    fs::write(duplicate_pem, pem).unwrap();
+
+    // Verify the exact independently inspected/re-signed DER, not a
+    // normalized or rewritten certificate, is loaded by rustls' PEM reader.
+    let pem_bytes = fs::read(duplicate_pem).unwrap();
+    let chain = rustls_pemfile::certs(&mut pem_bytes.as_slice())
+        .collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].as_ref(), signed_leaf.as_slice());
     Evidence { san_extension_count, signature_valid: true }
 }
 
