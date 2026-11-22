@@ -107,11 +107,60 @@ try {
 
 Node uses `node:tls`, `minVersion: "TLSv1.3"`, `maxVersion: "TLSv1.3"`, `rejectUnauthorized: true`, explicit CA, and the `serverName` SNI/DNS SAN hostname. It sends RSWP HELLO with raw token **only after** an authorized `secureConnect` and confirms the negotiated protocol is `TLSv1.3`. A wrong CA, hostname, expired/not-yet-valid certificate or failed TLS handshake aborts without exposing the token; there is no custom verifier or plaintext fallback.
 
+## Opt-in Node.js client-certificate mTLS (source only, #68)
+
+The same native Node `RystemLocalClient.connectTls` accepts **both** optional
+`cert` and `key` PEM inputs. Supplying both enables **mutual** TLS1.3,
+while omitting both preserves the existing *server-authentication-only*
+local TLS mode. A missing half, empty, malformed or oversized PEM
+(64 KiB maximum for each client certificate and private-key input) fails
+**before opening a network connection**. The public client CA on the
+server is configured separately through `--mtls-ca` and an exact
+`--mtls-policy`, and does not replace the caller's explicit server CA.
+
+```typescript
+import { readFileSync } from "node:fs";
+import { RystemLocalClient } from "./src/client.ts";
+
+const db = await RystemLocalClient.connectTls({
+  host: "127.0.0.1", port: 8790, serverName: "localhost",
+  ca: readFileSync("private/server-root-ca.pem"),
+  cert: readFileSync("private/client-writer.pem"),
+  key: readFileSync("private/client-writer.key"),
+  token: new Uint8Array(readFileSync("private/write.token")),
+});
+try {
+  await db.put("orders", "o42", new Map([["paid", true]]));
+} finally {
+  await db.close();
+}
+```
+
+`node:tls` performs actual client certificate/private-key authentication
+with TLSv1.3 only and **still** validates the server CA and DNS SAN with
+`rejectUnauthorized: true`. The RSWP HELLO bearer token is sent only
+after `secureConnect` and a verified TLS1.3 protocol; on the server,
+the certificate's exact canonical single URI SAN principal ACL and
+token collection ACL must both authorize the request. A reader client
+cannot write even when the bearer token grants `rw`. No CN-based trust,
+plain TCP fallback, remote bind or unverified hostname bypass exists.
+
+The real-process Node regression `tests/mtls.test.mjs` generates temporary,
+independently CA-signed X.509 client identities (writer, reader, untrusted
+issuer, wrong `clientAuth` EKU, unmapped principal) through OpenSSL, and
+runs the **real Rust mTLS CLI** with ephemeral policy files. Positive
+typed CRUD and negative authentication/authorization are exercised on
+Linux/macOS/Windows. No client private keys are committed or included in
+test logs/CLI arguments. Callers must securely load, protect and rotate
+their own key material; the current Node SDK **does not** audit local key
+file permissions, implement revocation/rotation or provide production
+remote certificate provisioning.
+
 ## Cross-language process-level security regressions
 
 `TlsContract.cs` and `tests/tls.test.mjs` launch the **real Rust executable** on Linux, macOS and Windows and verify successful TLS HELLO/PING, nested typed binary CRUD (bytes, references, i64, Unicode), concurrent requests, collection read/write denial, wrong CA/SAN, malformed credential, plaintext-to-TLS refusal and persistence across separate server processes. Additional **public** expiry fixtures ensure both languages reject server certificates whose notBefore/notAfter window excludes the current date, even when CA and SAN match. An RSWP Unauthorized response is explicitly flushed before the Rust server closes its TLS stream (#54).
 
-**These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. Source-only Rust mTLS exists on loopback, but there is no .NET/Node mTLS client-certificate provisioning, centralized identities, certificate/key rotation, revocation workflow, secure connection pools, released NuGet/npm SDK packages or service discovery. [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remains open.
+**These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. Source-only **Rust and Node mTLS certificate presentation** now works over loopback (#61/#68), but there is no .NET mTLS client-certificate transport, centrally managed identities, secure certificate/key rotation, revocation workflow, audited Windows client key ACLs, secure connection pools, released NuGet/npm SDK packages or service discovery. [#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) and [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remain open.
 
 ## mTLS principal policy and verified URI SAN authorization (#57/#58/#61/#62)
 

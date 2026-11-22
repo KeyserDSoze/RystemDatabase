@@ -259,3 +259,25 @@ immutability check, NOT a guarantee that upstream action code is safe.
 Upgrade actions only after checking official upstream commit IDs and release
 notes; update the 40-hex hash and its human-readable major-version comment
 together. See [review inventory and limitations](CI_ACTION_PINNING.md).
+
+## Node mTLS certificate and principal ACL real-process regression (#68)
+
+```sh
+cargo build --locked -p rystemdb-cli
+(cd src/libraries/typescript/rystemdb-client && RYSTEMDB_BINARY=../../../../target/debug/rystemdb npm test)
+```
+
+The Node `tests/mtls.test.mjs` integration case starts the actual
+Rust `rpc-serve` in explicit loopback TLS1.3+client mTLS mode, and
+generates ephemeral client CAs, leaf certs, RSA private keys and
+private bearer/principal policy files with `openssl` in a temporary
+directory. It verifies that client certificate, token AND principal
+collection ACL are jointly necessary for typed CRUD, plus invalid issuer,
+EKU, principal, server CA, hostname, missing certificate and wrong
+token behavior. A separate unit case checks partial/oversized/malformed
+PEM pairing is rejected **before** opening a socket. No private client
+keys or tokens are committed or placed in command-line arguments.
+CI runs Node against a real Rust CLI on Linux/macOS/Windows.
+[#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) remains
+OPEN for .NET mTLS client support, revocation/rotation, Windows ACL
+audits, remote policy and broader threat-model/security gates.

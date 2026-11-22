@@ -49,5 +49,35 @@ const db = await RystemLocalClient.connectTls({
 try { await db.ping(); } finally { await db.close(); }
 ```
 
-`connectTls` uses `node:tls`, **only TLS1.3**, `rejectUnauthorized: true`, explicit CA and standard SAN verification. RSWP bearer HELLO is sent only **after an authorized secureConnect**. Real Rust TLS process tests reject wrong root/name, expired/not-yet-valid certificate, invalid token and plaintext fallback, across Linux/macOS/Windows (#52/#54). The original `connect` remains plaintext local mode; no remote bind, mTLS, pooling or published npm SDK. [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
+`connectTls` uses `node:tls`, **only TLS1.3**, `rejectUnauthorized: true`, explicit CA and standard SAN verification. RSWP bearer HELLO is sent only **after an authorized secureConnect**. Real Rust TLS process tests reject wrong root/name, expired/not-yet-valid certificate, invalid token and plaintext fallback, across Linux/macOS/Windows (#52/#54). The original `connect` remains plaintext local mode; no remote bind, production mTLS, pooling or published npm SDK. [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
 
+
+## Source-only Node mTLS client certificate support (#68)
+
+Provide **both** optional `cert` and `key` PEM inputs to
+`RystemLocalClient.connectTls` to opt into native Node TLS1.3
+*mutual* authentication. Without these two inputs, the prior verified
+server-only TLS mode remains unchanged.
+
+```typescript
+const db = await RystemLocalClient.connectTls({
+  host: "127.0.0.1", port: 8790, serverName: "localhost",
+  ca: readFileSync("private/server-root-ca.pem"),
+  cert: readFileSync("private/client-writer.pem"),
+  key: readFileSync("private/client-writer.key"),
+  token: new Uint8Array(readFileSync("private/write.token")),
+});
+try { await db.ping(); } finally { await db.close(); }
+```
+
+The API requires bounded, paired PEM values (64 KiB maximum for each),
+not key/certificate path strings, and sends no token until the server
+certificate has been verified and TLS1.3 negotiated. A real Rust server
+then verifies the client certificate's CA, validity, clientAuth EKU and
+canonical URI SAN principal, intersecting certificate grants with the
+bearer-token ACL. Real-process tests generate ephemeral client CAs and
+keys; reject wrong issuer/EKU/identity, token and collection rights,
+and confirm writer CRUD plus reader denial on all three OSes. No
+non-loopback, key rotation/revocation, Windows ACL inspection, browser
+client, official npm release or production-remote trust guarantee.
+See [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
