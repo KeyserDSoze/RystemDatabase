@@ -237,3 +237,25 @@ three OSes; Linux also repeats the lock-specific gate six times. macOS runs
 within-test retry or suppressed errors. Parent #19 remains open until its
 original *Linux* flake's root cause is independently attributed; one macOS
 reproduction cannot prove both incidents identical.
+
+
+## Immutable GitHub Actions dependency gate (#67, child #11)
+
+Every hosted third-party action in .github/workflows/ci.yml and release.yml
+is now pinned to a reviewed full 40-character commit SHA instead of a
+movable major tag. A dependency-free Python checker examines all workflow
+uses references, rejecting mutable branches/tags, short hashes, dynamic
+expressions and unsupported action forms. It runs in Linux CI and the
+release verification job.
+
+To run the self-tests and repository scan locally:
+
+- python3 scripts/check_workflow_action_pins.py --self-test
+- python3 scripts/check_workflow_action_pins.py
+
+The five self-tests cover valid refs, invalid refs, quoted refs, local
+source-controlled actions, and line numbers. The scan is a syntactic
+immutability check, NOT a guarantee that upstream action code is safe.
+Upgrade actions only after checking official upstream commit IDs and release
+notes; update the 40-hex hash and its human-readable major-version comment
+together. See [review inventory and limitations](CI_ACTION_PINNING.md).
