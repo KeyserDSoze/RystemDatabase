@@ -28,14 +28,16 @@ always errors before binding or creating the database**. A valid policy alone
 must never turn on a TLS server that still accepts bearer-only identities.
 There is intentionally no new functional auth mode at this milestone.
 
-## Next steps and tradeoffs
+## Implementation sequence and remaining tradeoffs
 
-#56 must add audited X.509 parsing and URI SAN extraction *after* rustls verifies
+#61 added audited X.509 parsing and URI SAN extraction *after* rustls verifies
 client trust issuer, EKU and certificate validity. Only an exact verified
-principal may intersect its collection grants with the authenticated token's
-grants; deny requests without both. Continue with negative process tests
-(missing, wrong-root, wrong-EKU, expired, unknown/mismatched principal), then
-Rust/.NET/Node clients and a revocation/rotation design under #55/#39.
+principal intersects its collection grants with the authenticated token's
+grants; requests without both are denied. Real subprocess tests cover missing
+client cert, wrong issuer, wrong EKU, expired/future, unknown/mismatched
+principal, disjoint token and read/write rights. Rust SDK now supports source
+loopback mTLS; .NET/Node client cert support and a revocation/rotation
+design remain separate under #55/#39.
 The fixed trust-domain namespace is experimental and will require a versioned
 migration rather than silent reassignment if remote identity policy changes.
 No remote listener, public mTLS release or production security claim follows.
@@ -45,11 +47,12 @@ No remote listener, public mTLS release or production security claim follows.
 An additional `--mtls-ca` file, only valid together with the explicit
 `--mtls-policy`, `--auth-file` and TLS certificate/key, pins a set of client
 CA root certificates. Rustls WebPkiClientVerifier requires real X.509 client
-authentication on **loopback TLS1.3 only**. The listener fails all RSWP
+authentication on **loopback TLS1.3 only**. At the #58 milestone the listener failed all RSWP
 requests, including HELLO, even after certificate verification: certificate
-principal URI SAN extraction and ACL intersection are not yet active. This
-prevents accidental use of bearer tokens to escalate a merely TLS-verified
-client. No private test client keys are committed to the repository in this
+principal URI SAN extraction and ACL intersection were deliberately absent.
+That fail-closed interim gate was superseded by #61's verified principal
+and token intersection. This prevents a bearer-only token from escalating
+a merely TLS-verified client. No private test client keys are committed to the repository in this
 milestone. All existing TLS-only and plaintext localhost entry points remain.
 
 ## Verified URI SAN principal intersection (#61)

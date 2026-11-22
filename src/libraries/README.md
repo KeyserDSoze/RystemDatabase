@@ -4,12 +4,12 @@ Four project directories, all developed directly on `main`:
 
 | Library | Path | Stage | Issue |
 | --- | --- | --- | --- |
-| Rust | `rust/rystemdb-client` | Experimental **synchronous** `LocalClient` with verified **TLS1.3 on loopback** or explicit plaintext local mode, HELLO/typed CRUD; no async/pool/mTLS or secure remote | #26 |
+| Rust | `rust/rystemdb-client` | Experimental **synchronous** `LocalClient` with verified **TLS1.3 on loopback** or explicit plaintext local mode, HELLO/typed CRUD; no async/pool; experimental verified localhost mTLS, but no secure remote | #26 |
 | .NET | `dotnet/RystemDatabase.Client` | Async `RystemLoopbackClient`: real native typed CRUD over plaintext **or CA/SAN-verified TLS1.3** on numeric localhost, tested across 3 OS; no mTLS/pool/NuGet | #27/#45 |
 | TypeScript | `typescript/rystemdb-client` | Async `RystemLocalClient`: persistent native TCP **or CA/SAN-verified TLS1.3**, concurrent correlated typed CRUD and real Rust subprocess tests; localhost only | #28/#46 |
 | EF Core | `dotnet/RystemDatabase.EntityFrameworkCore` | Buildable .NET project scaffold only, **not an EF Core provider** | #29 |
 
-The `src/rystemdb-protocol` crate is the binary frame reference (#24); the localhost server and all three SDK clients now exchange real typed CRUD. They also support **opt-in local-token HELLO** and explicit collection read/write ACLs (#49/#50). **All three SDKs now have local CA/SAN-verified TLS1.3** (#51/#52); **remote TLS/mTLS, audited production security and SDK publishing remain unimplemented** (#39).
+The `src/rystemdb-protocol` crate is the binary frame reference (#24); the localhost server and all three SDK clients now exchange real typed CRUD. They also support **opt-in local-token HELLO** and explicit collection read/write ACLs (#49/#50). **All three SDKs now have local CA/SAN-verified TLS1.3** (#51/#52); **remote/production TLS/mTLS, audited security and SDK publishing remain unimplemented**; Rust offers opt-in local verified client cert URI SAN and token ACL intersection (#61) (#39).
 
 Conformance source/tests:
 - Rust: `src/rystemdb-protocol/tests/wire_contract.rs`

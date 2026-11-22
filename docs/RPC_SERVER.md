@@ -12,7 +12,7 @@ cargo run --locked -p rystemdb-cli -- rpc-serve \
 
 `--listen` defaults to `127.0.0.1:8790`. Any non-loopback address (including `0.0.0.0`, `::`, and all external IPv4/IPv6 addresses) is **rejected before opening/creating the database**. The existing `rystemdb serve` command is still the separate HTTP health-only endpoint; it does **not** serve documents.
 
-**WARNING: no secure remote access.** An **optional local-token/collection ACL** is available with `--auth-file`. The **Rust server and SDK now support opt-in certificate-verified TLS1.3** with `--tls-cert`, `--tls-key` and `--auth-file` ([LOCAL_TLS.md](LOCAL_TLS.md)); the old local mode remains plaintext, and .NET/Node clients do not yet implement TLS. Never tunnel/port-forward externally. Full remote identity/mTLS remains tracked in [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+**WARNING: no secure remote access.** An **optional local-token/collection ACL** is available with `--auth-file`. The **Rust server and SDK now support opt-in certificate-verified TLS1.3** with `--tls-cert`, `--tls-key` and `--auth-file` ([LOCAL_TLS.md](LOCAL_TLS.md)); the old local mode remains plaintext, and .NET/Node clients also provide separate, verified TLS1.3 endpoints. Opt-in `--mtls-policy` + `--mtls-ca` supports verified client leaf URI SAN principal and bearer-token ACL intersection for the **Rust SDK on localhost only** (#61). Never tunnel/port-forward externally. Production remote identity, certificate lifecycle and .NET/Node mTLS remain tracked in [#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) and [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 ## Wire frame
 

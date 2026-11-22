@@ -38,7 +38,7 @@ bool deleted = await db.DeleteAsync("users", "u42");
 
 `ConnectAsync` validates the numeric IP before socket creation and performs RSWP 1.0 HELLO. Async operations take optional `CancellationToken`, use 3-second per-call deadlines, validate the 24-byte frame and response ID/opcode, and serialize I/O through a semaphore. Cancellation or broken TCP cannot guarantee the outcome of a write; the connection closes rather than blindly replaying it. A missing GET becomes `null`, and a second DELETE yields `false`. Errors return explicit exceptions / `RystemRpcException.Status`.
 
-**Not yet implemented**: mTLS/secure remote identity, pooling, multiplexing, automatic safe idempotency/retries, query execution, shard-aware placement and NuGet distribution. Parent #27 remains open.
+**Not yet implemented**: .NET client-certificate mTLS, secure remote identity, pooling, multiplexing, automatic safe idempotency/retries, query execution, shard-aware placement and NuGet distribution. The Rust SDK has experimental loopback-only `connect_mtls` with URI SAN principal and token ACL intersection (#61). Parent #27 remains open.
 
 ## TypeScript / Node.js 22+ (asynchronous, correlated concurrent requests)
 
@@ -65,7 +65,7 @@ try {
 
 `connect` permits only numeric `127.0.0.1` and `::1` (no DNS). A native socket `Buffer` is normalized to **plain `Uint8Array`**, with independent golden tests plus a real-process regression for a Buffer subclass bug [#47](https://github.com/KeyserDSoze/RystemDatabase/issues/47). The socket parser handles TCP frame fragmentation, guards 16 MiB per message, and correlates concurrent requests by native BigInt u64 IDs. A bounded pending-request map and 3-second inactivity/request timers fail closed on lost connection. No automatic write retries or full streaming queries.
 
-**Not yet implemented**: secure remote identity/mTLS, user-provided AbortSignal, connection pools/retry policy, browser support, NuGet/npm SDK release, sharding or geo-redundancy. Parent #28 remains open.
+**Not yet implemented**: secure remote identity, Node client-certificate mTLS, user-provided AbortSignal, connection pools/retry policy, browser support, NuGet/npm SDK release, sharding or geo-redundancy. Parent #28 remains open.
 
 ## Real Rust-process CI verification (Linux, macOS, Windows)
 
