@@ -3,9 +3,127 @@
 //! This parser never validates certificate signatures; rustls does that first.
 const MAX_CERT_DER: usize = 64 * 1024;
 
-#[allow(dead_code)] // RED: wired to the TLS peer after tests demonstrate failure
-pub(super) fn exact_uri_san(_verified_leaf_der: &[u8]) -> Option<&str> {
-    None // TDD RED: not allowed to silently skip unparseable URI entries
+/// Strict, bounded DER element reader for *structural validation only*.
+///
+/// IMPORTANT: This is NOT an X.509 chain/signature/EKU verifier. Rustls must
+/// already have accepted the client certificate before this function is
+/// called. All lengths use canonical definite DER encoding, full consumption
+/// and checked indices; no scan-for-OID or byte-pattern identity extraction.
+struct DerReader<'a> {
+    remainder: &'a [u8],
+}
+
+impl<'a> DerReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self { Self { remainder: bytes } }
+    fn is_empty(&self) -> bool { self.remainder.is_empty() }
+    fn peek(&self) -> Option<u8> { self.remainder.first().copied() }
+
+    fn take(&mut self, expected: u8) -> Option<&'a [u8]> {
+        let (tag, value) = self.next()?;
+        (tag == expected).then_some(value)
+    }
+
+    fn next(&mut self) -> Option<(u8, &'a [u8])> {
+        let original = self.remainder;
+        let tag = *original.first()?;
+        // Do not accept high-tag-number, EOC, or non-DER indefinite lengths.
+        if tag == 0 || tag & 0x1f == 0x1f { return None; }
+        let first_len = *original.get(1)?;
+        let (len, header) = if first_len < 0x80 {
+            (usize::from(first_len), 2usize)
+        } else {
+            let width = usize::from(first_len & 0x7f);
+            if width == 0 || width > 3 { return None; }
+            let len_bytes = original.get(2..2 + width)?;
+            if len_bytes[0] == 0 { return None; }
+            let mut len = 0usize;
+            for b in len_bytes {
+                len = len.checked_mul(256)?.checked_add(usize::from(*b))?;
+            }
+            // Long form only for values >= 128 and with minimal width.
+            if len < 128 || (width > 1 && len < (1usize << (8 * (width - 1)))) {
+                return None;
+            }
+            (len, 2 + width)
+        };
+        let end = header.checked_add(len)?;
+        let body = original.get(header..end)?;
+        self.remainder = original.get(end..)?;
+        Some((tag, body))
+    }
+}
+
+/// Extract an *exact, canonical, single URI SAN* from a leaf already verified
+/// by rustls' WebPkiClientVerifier. This deliberately chooses a restricted
+/// mTLS identity profile: exactly ONE GeneralName of URI type, no DNS/IP,
+/// otherName, empty/malformed/undecodable or repeated SAN extension entries.
+///
+/// The outer Certificate/TBSCertificate/Extensions are navigated structurally
+/// rather than searching for an OID: an unrelated extension, subject/CN or
+/// certificate signature cannot be confused with a SAN. The caller must also
+/// cross-check the returned value against rustls-webpki's parsed URI iterator.
+pub(super) fn exact_uri_san(verified_leaf_der: &[u8]) -> Option<&str> {
+    if verified_leaf_der.is_empty() || verified_leaf_der.len() > MAX_CERT_DER {
+        return None;
+    }
+    let mut full = DerReader::new(verified_leaf_der);
+    let outer = full.take(0x30)?;
+    if !full.is_empty() { return None; }
+    let mut certificate = DerReader::new(outer);
+    let tbs_der = certificate.take(0x30)?;
+    certificate.take(0x30)?; // signatureAlgorithm (crypto verification: rustls)
+    certificate.take(0x03)?; // signatureValue
+    if !certificate.is_empty() { return None; }
+
+    let mut tbs = DerReader::new(tbs_der);
+    // SAN extensions are valid only in explicit v3 TBSCertificate.
+    let mut version = DerReader::new(tbs.take(0xa0)?);
+    if version.take(0x02)? != [2] || !version.is_empty() { return None; }
+    for field in [0x02, 0x30, 0x30, 0x30, 0x30, 0x30] {
+        tbs.take(field)?; // serial, signature, issuer, validity, subject, SPKI
+    }
+    if tbs.peek() == Some(0x81) { tbs.take(0x81)?; } // issuerUniqueID
+    if tbs.peek() == Some(0x82) { tbs.take(0x82)?; } // subjectUniqueID
+    let mut wrapper = DerReader::new(tbs.take(0xa3)?); // [3] EXPLICIT
+    if !tbs.is_empty() { return None; }
+    let raw_extensions = wrapper.take(0x30)?;
+    if !wrapper.is_empty() { return None; }
+    let mut extensions = DerReader::new(raw_extensions);
+    let mut san = None;
+    let mut count = 0usize;
+
+    while !extensions.is_empty() {
+        count += 1;
+        if count > 64 { return None; } // resource guard independent of cert size
+        let mut ext = DerReader::new(extensions.take(0x30)?);
+        let oid = ext.take(0x06)?;
+        if oid.is_empty() { return None; }
+        if ext.peek() == Some(0x01) {
+            // DER BOOLEAN allows only 00 (false) or FF (true).
+            if !matches!(ext.take(0x01)?, [0] | [0xff]) { return None; }
+        }
+        let value = ext.take(0x04)?;
+        if !ext.is_empty() { return None; }
+        if oid == [0x55, 0x1d, 0x11] { // subjectAltName, 2.5.29.17
+            if san.is_some() { return None; } // repeated SAN OID
+            let mut encoded = DerReader::new(value);
+            let names_der = encoded.take(0x30)?;
+            if !encoded.is_empty() { return None; }
+            let mut names = DerReader::new(names_der);
+            let uri = names.take(0x86)?; // [6] IA5String, IMPLICIT
+            // No second URI, DNS, IP, otherName, or malformed GeneralName.
+            if !names.is_empty() { return None; }
+            let uri = std::str::from_utf8(uri).ok()?;
+            let id = uri.strip_prefix("spiffe://rystemdb.local/client/")?;
+            if !(1..=64).contains(&id.len()) || !id.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-'
+            }) {
+                return None;
+            }
+            san = Some(uri);
+        }
+    }
+    san
 }
 
 #[cfg(test)]

@@ -136,8 +136,8 @@ impl Fixture {
         let hex=raw_general_names.iter().map(|b| format!("{b:02X}"))
             .collect::<Vec<_>>().join(":");
         fs::write(&ext, format!(
-            "[identity]\\nbasicConstraints=critical,CA:FALSE\\nkeyUsage=critical,digitalSignature\\nextendedKeyUsage=clientAuth\\n2.5.29.17=DER:{hex}\\n"
-        ).replace("\\\\n", "\\n")).unwrap();
+            "[identity]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n2.5.29.17=DER:{hex}\n"
+        )).unwrap();
         openssl(&["req","-new","-newkey","rsa:2048","-nodes",
             "-keyout",text_path(&key),"-out",text_path(&csr),
             "-subj","/CN=spiffe://rystemdb.local/client/writer"]);

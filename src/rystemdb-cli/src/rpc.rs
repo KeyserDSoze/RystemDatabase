@@ -178,13 +178,20 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
                 Ok(parsed) => parsed,
                 Err(_) => return,
             };
-            // Multiple URI SAN names are ambiguous and never normalized.
-            // URI identity requires the canonical, exact versioned policy ID.
-            let mut identities = parsed.valid_uri_names();
-            let principal = match identities.next() {
-                Some(one) if identities.next().is_none() => one,
-                _ => return,
+            // #62: Check ALL raw SAN GeneralNames with strict bounded DER
+            // traversal. WebPKI's valid_uri_names() deliberately filters
+            // undecodable GeneralNames; using that iterator alone could
+            // mistake a valid+invalid pair for a single identity.
+            let principal = match crate::mtls_san::exact_uri_san(leaf.as_ref()) {
+                Some(principal) => principal,
+                None => return,
             };
+            // Defense in depth: require both independent parsers to agree on
+            // the exact, already-verified leaf identity (no CN/normalization).
+            let mut identities = parsed.valid_uri_names();
+            if identities.next() != Some(principal) || identities.next().is_some() {
+                return;
+            }
             let grants = match grants_for_mtls_principal(rules, principal) {
                 Some(grants) => grants,
                 None => return,
