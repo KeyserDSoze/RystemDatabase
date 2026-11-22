@@ -195,11 +195,19 @@ function decodeValue(r: Reader, depth: number): RdbValue {
       const count = r.u32();
       if (count > Math.floor(r.remaining/5)) throw new Error("truncated RDB object");
       const values = new Map<string,RdbValue>();
+      let previousKey: Uint8Array | undefined;
       for(let i=0;i<count;i++) {
         const key = r.text();
         const value = decodeValue(r,depth+1);
         if (values.has(key)) throw new Error("duplicate RDB field");
+        // Compare UTF-8 bytes rather than JavaScript's UTF-16 ordering:
+        // a noncanonical object must not have multiple valid wire encodings.
+        const bytes = utf8(key);
+        if (previousKey !== undefined && compareBytes(previousKey,bytes) >= 0) {
+          throw new Error("noncanonical RDB object field order");
+        }
         values.set(key,value);
+        previousKey = bytes;
       }
       return values;
     }

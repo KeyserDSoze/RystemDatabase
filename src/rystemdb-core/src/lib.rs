@@ -33,6 +33,7 @@ pub enum CodecError {
     TooLarge,
     TrailingBytes,
     DuplicateKey,
+    NonCanonicalKeyOrder,
     NonFiniteFloat,
     InvalidReference,
 }
@@ -195,10 +196,19 @@ impl<'a> Reader<'a> {
                     return Err(CodecError::UnexpectedEof);
                 }
                 let mut result = BTreeMap::new();
+                let mut previous_key: Option<String> = None;
                 for _ in 0..count {
                     let key = self.string()?;
                     let val = self.value(depth + 1)?;
-                    if result.insert(key, val).is_some() { return Err(CodecError::DuplicateKey); }
+                    // #65: A byte-identical logical object must have exactly
+                    // one canonical RDB representation. String's Rust Ord
+                    // compares UTF-8 bytes, not UTF-16 code units.
+                    if result.contains_key(&key) { return Err(CodecError::DuplicateKey); }
+                    if previous_key.as_ref().is_some_and(|previous| key < *previous) {
+                        return Err(CodecError::NonCanonicalKeyOrder);
+                    }
+                    result.insert(key.clone(), val);
+                    previous_key = Some(key);
                 }
                 Ok(Value::Object(result))
             }
