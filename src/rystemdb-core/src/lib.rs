@@ -8,6 +8,8 @@ const MAGIC: &[u8; 4] = b"RDB\0";
 const VERSION: u8 = 1;
 const MAX_DEPTH: usize = 64;
 const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
+// #71: cap decoded heap-value expansion, not only on-wire byte count.
+const MAX_VALUE_NODES: usize = 262_144;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -51,7 +53,8 @@ pub fn encode(value: &Value) -> Result<Vec<u8>, CodecError> {
     let mut output = Vec::new();
     append(&mut output, MAGIC)?;
     append(&mut output, &[VERSION])?;
-    encode_value(value, &mut output, 0)?;
+    let mut nodes = 0;
+    encode_value(value, &mut output, 0, &mut nodes)?;
     Ok(output)
 }
 
@@ -69,7 +72,7 @@ pub fn decode(input: &[u8]) -> Result<Value, CodecError> {
     if input[4] != VERSION {
         return Err(CodecError::UnsupportedVersion);
     }
-    let mut reader = Reader { input, offset: 5 };
+    let mut reader = Reader { input, offset: 5, nodes: 0 };
     let value = reader.value(0)?;
     if reader.offset != input.len() {
         return Err(CodecError::TrailingBytes);
@@ -96,10 +99,29 @@ fn write_string(out: &mut Vec<u8>, value: &str) -> Result<(), CodecError> {
     append(out, value.as_bytes())
 }
 
-fn encode_value(value: &Value, out: &mut Vec<u8>, depth: usize) -> Result<(), CodecError> {
+// Every tagged value (including a root array/object) consumes one slot.
+// For collections, check the *minimum* number of new nodes before iteration
+// or any preallocation. Nested children share the same counter.
+fn take_node(nodes: &mut usize) -> Result<(), CodecError> {
+    if *nodes >= MAX_VALUE_NODES {
+        return Err(CodecError::TooLarge);
+    }
+    *nodes += 1;
+    Ok(())
+}
+
+fn check_children(nodes: usize, count: usize) -> Result<(), CodecError> {
+    if count > MAX_VALUE_NODES - nodes {
+        return Err(CodecError::TooLarge);
+    }
+    Ok(())
+}
+
+fn encode_value(value: &Value, out: &mut Vec<u8>, depth: usize, nodes: &mut usize) -> Result<(), CodecError> {
     if depth > MAX_DEPTH {
         return Err(CodecError::TooDeep);
     }
+    take_node(nodes)?;
     match value {
         Value::Null => append(out, &[0]),
         Value::Bool(false) => append(out, &[1]),
@@ -113,17 +135,19 @@ fn encode_value(value: &Value, out: &mut Vec<u8>, depth: usize) -> Result<(), Co
         Value::String(x) => { append(out, &[5])?; write_string(out, x) }
         Value::Bytes(x) => { append(out, &[6])?; write_len(out, x.len())?; append(out, x) }
         Value::Array(values) => {
+            check_children(*nodes, values.len())?;
             append(out, &[7])?;
             write_len(out, values.len())?;
-            for element in values { encode_value(element, out, depth + 1)?; }
+            for element in values { encode_value(element, out, depth + 1, nodes)?; }
             Ok(())
         }
         Value::Object(fields) => {
+            check_children(*nodes, fields.len())?;
             append(out, &[8])?;
             write_len(out, fields.len())?;
             for (name, value) in fields {
                 write_string(out, name)?;
-                encode_value(value, out, depth + 1)?;
+                encode_value(value, out, depth + 1, nodes)?;
             }
             Ok(())
         }
@@ -139,6 +163,7 @@ fn encode_value(value: &Value, out: &mut Vec<u8>, depth: usize) -> Result<(), Co
 struct Reader<'a> {
     input: &'a [u8],
     offset: usize,
+    nodes: usize,
 }
 
 impl<'a> Reader<'a> {
@@ -161,6 +186,7 @@ impl<'a> Reader<'a> {
 
     fn value(&mut self, depth: usize) -> Result<Value, CodecError> {
         if depth > MAX_DEPTH { return Err(CodecError::TooDeep); }
+        take_node(&mut self.nodes)?;
         let tag = self.take(1)?[0];
         match tag {
             0 => Ok(Value::Null),
@@ -183,6 +209,7 @@ impl<'a> Reader<'a> {
             }
             7 => {
                 let count = self.length()?;
+                check_children(self.nodes, count)?;
                 if count > self.input.len().saturating_sub(self.offset) {
                     return Err(CodecError::UnexpectedEof);
                 }
@@ -192,6 +219,7 @@ impl<'a> Reader<'a> {
             }
             8 => {
                 let count = self.length()?;
+                check_children(self.nodes, count)?;
                 if count > self.input.len().saturating_sub(self.offset) / 5 {
                     return Err(CodecError::UnexpectedEof);
                 }

@@ -29,6 +29,8 @@ public static class RystemRdbCodec
 {
     private const int MaxBytes = 64 * 1024 * 1024;
     private const int MaxDepth = 64;
+    // #71: 64 MiB of wire bytes can otherwise expand into huge managed heaps.
+    private const int MaxValueNodes = 262_144;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static ReadOnlySpan<byte> Magic => "RDB\0"u8;
 
@@ -44,6 +46,18 @@ public static class RystemRdbCodec
     private sealed class Writer
     {
         private readonly MemoryStream _stream = new();
+        private int _nodes;
+        public void Node()
+        {
+            if (_nodes >= MaxValueNodes)
+                throw new ArgumentException("RDB value node limit exceeded");
+            _nodes++;
+        }
+        public void Children(int count)
+        {
+            if (count > MaxValueNodes - _nodes)
+                throw new ArgumentException("RDB value node limit exceeded");
+        }
 
         private void Guard(int additional)
         {
@@ -91,6 +105,7 @@ public static class RystemRdbCodec
     private static void WriteValue(Writer w, RdbValue value, int depth)
     {
         if (depth > MaxDepth) throw new ArgumentException("RDB nesting too deep");
+        w.Node();
         if (value is null) throw new ArgumentException("Use RdbValue.Null for explicit null");
         switch (value)
         {
@@ -120,6 +135,7 @@ public static class RystemRdbCodec
                 break;
             case RdbValue.Array v:
                 ArgumentNullException.ThrowIfNull(v.Values);
+                w.Children(v.Values.Count);
                 w.Byte(7);
                 w.U32(v.Values.Count);
                 foreach (var item in v.Values) WriteValue(w, item, depth + 1);
@@ -127,6 +143,7 @@ public static class RystemRdbCodec
             case RdbValue.Object v:
             {
                 ArgumentNullException.ThrowIfNull(v.Fields);
+                w.Children(v.Fields.Count);
                 // Rust BTreeMap<String> sorts by UTF-8 byte lexicographic order.
                 // .NET ordinal string sorting instead uses UTF-16 code units,
                 // which differs for supplementary Unicode code points.
@@ -160,6 +177,18 @@ public static class RystemRdbCodec
     {
         private readonly ReadOnlySpan<byte> _bytes;
         private int _offset;
+        private int _nodes;
+        public void Node()
+        {
+            if (_nodes >= MaxValueNodes)
+                throw new ArgumentException("RDB value node limit exceeded");
+            _nodes++;
+        }
+        public void Children(uint count)
+        {
+            if (count > (uint)(MaxValueNodes - _nodes))
+                throw new ArgumentException("RDB value node limit exceeded");
+        }
         public Reader(ReadOnlySpan<byte> bytes)
         {
             _bytes = bytes;
@@ -200,6 +229,7 @@ public static class RystemRdbCodec
     private static RdbValue ReadValue(ref Reader r, int depth)
     {
         if (depth > MaxDepth) throw new ArgumentException("RDB nesting too deep");
+        r.Node();
         byte tag = r.Byte();
         switch (tag)
         {
@@ -223,6 +253,7 @@ public static class RystemRdbCodec
             case 7:
             {
                 uint count = r.U32();
+                r.Children(count); // before new List<T>((int)count)
                 if (count > (uint)r.Remaining) throw new ArgumentException("Truncated RDB array");
                 var items = new List<RdbValue>((int)count);
                 for (uint i = 0; i < count; i++) items.Add(ReadValue(ref r, depth + 1));
@@ -231,6 +262,7 @@ public static class RystemRdbCodec
             case 8:
             {
                 uint count = r.U32();
+                r.Children(count);
                 if (count > (uint)(r.Remaining / 5)) throw new ArgumentException("Truncated RDB object");
                 var fields = new Dictionary<string,RdbValue>(StringComparer.Ordinal);
                 byte[]? previousKey = null;

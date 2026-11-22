@@ -21,6 +21,8 @@ export type RdbValue = null | boolean | bigint | number | string | Uint8Array |
 
 const MAX_BYTES = 64 * 1024 * 1024;
 const MAX_DEPTH = 64;
+// #71: every tagged value, root container included, counts against this cap.
+const MAX_VALUE_NODES = 262_144;
 const INT64_MIN = -(1n << 63n);
 const INT64_MAX = (1n << 63n) - 1n;
 const textEncoder = new TextEncoder();
@@ -40,6 +42,17 @@ function utf8(value: string): Uint8Array {
 class Writer {
   private buf = new Uint8Array(256);
   private length = 0;
+  private nodes = 0;
+
+  node(): void {
+    if (this.nodes >= MAX_VALUE_NODES) throw new Error("RDB value node limit exceeded");
+    this.nodes++;
+  }
+  children(count: number): void {
+    if (count > MAX_VALUE_NODES - this.nodes) {
+      throw new Error("RDB value node limit exceeded");
+    }
+  }
 
   private ensure(additional: number): void {
     const size = this.length + additional;
@@ -97,6 +110,7 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
 }
 function encodeValue(w: Writer, value: RdbValue, depth: number): void {
   if (depth > MAX_DEPTH) throw new Error("RDB nesting too deep");
+  w.node();
   if (value === null) { w.byte(0); return; }
   if (typeof value === "boolean") { w.byte(value ? 2 : 1); return; }
   if (typeof value === "bigint") { w.byte(3); w.i64(value); return; }
@@ -104,11 +118,13 @@ function encodeValue(w: Writer, value: RdbValue, depth: number): void {
   if (typeof value === "string") { w.byte(5); w.text(value); return; }
   if (value instanceof Uint8Array) { w.byte(6); w.u32(value.length); w.bytes(value); return; }
   if (Array.isArray(value)) {
+    w.children(value.length);
     w.byte(7); w.u32(value.length);
     for(const item of value) encodeValue(w,item,depth+1);
     return;
   }
   if (value instanceof Map) {
+    w.children(value.size);
     const fields = [...value.entries()].map(([key,v]) => ({ key: utf8(key), value: v }));
     fields.sort((a,b) => compareBytes(a.key,b.key)); // matches Rust BTreeMap UTF-8 ordering
     w.byte(8); w.u32(fields.length);
@@ -135,6 +151,16 @@ export function encodeRdb(value: RdbValue): Uint8Array {
 
 class Reader {
   private pos = 0;
+  private nodes = 0;
+  node(): void {
+    if (this.nodes >= MAX_VALUE_NODES) throw new Error("RDB value node limit exceeded");
+    this.nodes++;
+  }
+  children(count: number): void {
+    if (count > MAX_VALUE_NODES - this.nodes) {
+      throw new Error("RDB value node limit exceeded");
+    }
+  }
   private readonly view: DataView;
   private readonly bytes: Uint8Array;
   constructor(bytes: Uint8Array) {
@@ -175,6 +201,7 @@ class Reader {
 }
 function decodeValue(r: Reader, depth: number): RdbValue {
   if (depth > MAX_DEPTH) throw new Error("RDB nesting too deep");
+  r.node();
   const tag = r.byte();
   switch(tag) {
     case 0: return null;
@@ -186,6 +213,7 @@ function decodeValue(r: Reader, depth: number): RdbValue {
     case 6: return Uint8Array.from(r.take(r.u32()));
     case 7: {
       const count = r.u32();
+      r.children(count);
       if (count > r.remaining) throw new Error("truncated RDB array");
       const values: RdbValue[] = [];
       for(let i=0;i<count;i++) values.push(decodeValue(r,depth+1));
@@ -193,6 +221,7 @@ function decodeValue(r: Reader, depth: number): RdbValue {
     }
     case 8: {
       const count = r.u32();
+      r.children(count);
       if (count > Math.floor(r.remaining/5)) throw new Error("truncated RDB object");
       const values = new Map<string,RdbValue>();
       let previousKey: Uint8Array | undefined;
