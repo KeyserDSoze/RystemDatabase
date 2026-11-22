@@ -17,6 +17,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Verify immutable GitHub Actions dependencies (#67)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 scripts/check_workflow_action_pins.py --self-test
+          python3 scripts/check_workflow_action_pins.py
       - name: Rust version
         run: rustc --version
       - name: Check workspace and unit/integration tests

@@ -39,6 +39,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify immutable GitHub Actions dependencies (#67)
+        run: |
+          python3 scripts/check_workflow_action_pins.py --self-test
+          python3 scripts/check_workflow_action_pins.py
       - run: cargo test --workspace --locked --all-targets
       - name: Run process-crash regression suite
         run: cargo test -p rystemdb-storage --locked --features fault-injection --tests -- --test-threads=1
