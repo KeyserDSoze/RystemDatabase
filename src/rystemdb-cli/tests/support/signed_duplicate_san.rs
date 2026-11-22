@@ -194,3 +194,105 @@ pub(super) fn create(
     run_openssl(&["x509", "-in", utf8_path(duplicate_pem), "-noout", "-subject"]);
     Evidence { san_extension_count, signature_valid: true }
 }
+
+
+// The normal Rust SDK (correctly) refuses to configure a duplicate-extension
+// client certificate before any network traffic, because CertifiedKey::from_der
+// parses X.509 to match the private key. That local rejection is NOT proof that
+// the server rejects the attack. This TEST-ONLY certificate resolver uses
+// rustls' standard signing key provider and standard server CA verifier while
+// deliberately *not* calling keys_match() on the malformed client leaf.
+// This makes a real client-certificate Certificate handshake message reach the
+// real server, with no custom/insecure TLS server verifier.
+#[derive(Debug)]
+struct MalformedFixtureClientResolver {
+    identity: std::sync::Arc<rustls::sign::CertifiedKey>,
+    offered: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl rustls::client::ResolvesClientCert for MalformedFixtureClientResolver {
+    fn resolve(
+        &self, _root_hints: &[&[u8]], sigschemes: &[rustls::SignatureScheme],
+    ) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {
+        if self.identity.key.choose_scheme(sigschemes).is_some() {
+            self.offered.store(true, std::sync::atomic::Ordering::SeqCst);
+            Some(std::sync::Arc::clone(&self.identity))
+        } else {
+            None
+        }
+    }
+
+    fn has_certs(&self) -> bool { true }
+}
+
+pub(super) fn assert_real_server_denies_signed_duplicate(
+    addr: std::net::SocketAddr, server_ca: &Path,
+    malformed_cert: &Path, matching_private_key: &Path, token: &[u8; 32],
+) {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use rystemdb_protocol::{read_frame, write_frame, Frame, Operation};
+
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut roots = rustls::RootCertStore::empty();
+    let ca_data = fs::read(server_ca).unwrap();
+    for pem in rustls_pemfile::certs(&mut ca_data.as_slice()) {
+        roots.add(pem.unwrap()).unwrap();
+    }
+    let malformed_pem = fs::read(malformed_cert).unwrap();
+    let chain = rustls_pemfile::certs(&mut malformed_pem.as_slice())
+        .collect::<Result<Vec<_>,_>>().unwrap();
+    assert_eq!(chain.len(), 1, "test must present the actual signed X509 leaf");
+
+    let key_pem = fs::read(matching_private_key).unwrap();
+    let key_der = rustls_pemfile::private_key(&mut key_pem.as_slice())
+        .unwrap().unwrap();
+    let signing_key = provider.key_provider.load_private_key(key_der).unwrap();
+    let offered = Arc::new(AtomicBool::new(false));
+    let resolver = MalformedFixtureClientResolver {
+        identity: Arc::new(rustls::sign::CertifiedKey::new(chain, signing_key)),
+        offered: Arc::clone(&offered),
+    };
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13]).unwrap()
+        .with_root_certificates(roots)
+        .with_client_cert_resolver(Arc::new(resolver));
+
+    // Only numeric loopback. Still verify the *server* CA and localhost DNS
+    // SAN: the test bypasses ONLY local client-leaf parsing to reach the
+    // real server's own clientAuth verifier.
+    assert!(addr.ip().is_loopback());
+    let sock = std::net::TcpStream::connect(addr).unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+    sock.set_write_timeout(Some(Duration::from_secs(4))).unwrap();
+    let conn = rustls::ClientConnection::new(
+        Arc::new(config),
+        rustls::pki_types::ServerName::try_from("localhost").unwrap().to_owned(),
+    ).unwrap();
+    let mut stream = rustls::StreamOwned::new(conn, sock);
+
+    // A rejected certificate may abort at the handshake or immediately
+    // after the handshake; either way the RSWP HELLO must NEVER succeed.
+    // The offered flag also proves it was submitted to rustls' actual
+    // client-auth negotiation rather than just refused by a local SDK parser.
+    while stream.conn.is_handshaking() {
+        if stream.conn.complete_io(&mut stream.sock).is_err() {
+            assert!(offered.load(Ordering::SeqCst),
+                "client certificate was never offered during the actual TLS handshake");
+            return;
+        }
+    }
+    assert!(offered.load(Ordering::SeqCst),
+        "server never requested the duplicate-extension client certificate");
+    let mut hello_payload = vec![1, 0, 0, 32];
+    hello_payload.extend_from_slice(token);
+    let hello = Frame::request(Operation::Hello, 1, hello_payload);
+    if write_frame(&mut stream, &hello).is_err() || stream.flush().is_err() {
+        return; // server closed immediately after rejecting verified identity
+    }
+    let reply = read_frame(&mut stream);
+    assert!(!matches!(reply, Ok(response) if response.status == 0),
+        "real server accepted RSWP HELLO for a signed duplicate-SAN certificate");
+}

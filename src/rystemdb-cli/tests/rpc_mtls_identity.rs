@@ -299,8 +299,16 @@ fn tdd_signed_duplicate_san_extension_is_rejected_by_real_mtls_server() {
     // extension is present. A local PEM/key configuration error is not a
     // substitute for testing server-side TLS certificate validation.
     let result=f.connect(server.addr,"duplicate-signed",&RW);
-    assert!(!matches!(result, Ok(_) | Err(ClientError::TlsConfig)),
-        "duplicate SAN OID reached RSWP, or client did not present the signed test certificate");
+    assert!(matches!(result, Err(ClientError::TlsConfig)),
+        "normal SDK should refuse the ambiguous client certificate locally");
+    // The test-only client resolver bypasses that LOCAL key-match parser but
+    // never bypasses TLS server-certificate trust/hostname validation. This
+    // forces an actual malformed certificate through a real TLS1.3
+    // Certificate handshake against the server to test SERVER rejection.
+    signed_duplicate_san::assert_real_server_denies_signed_duplicate(
+        server.addr, &f.path("root-ca.pem"),
+        &f.path("duplicate-signed.pem"), &f.path("duplicate-signed.key"), &RW,
+    );
     assert!(valid.delete("orders","duplicate-probe").unwrap());
     assert_eq!(valid.get("orders","duplicate-probe").unwrap(),None);
 }
