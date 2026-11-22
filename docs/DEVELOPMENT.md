@@ -196,3 +196,20 @@ additional regression gate, while the full Rust/fault-injection
 matrix remains on Linux, macOS and Windows. The original intermittent
 Linux reopen issue #19 remains OPEN: a green stress gate is evidence, not a
 conclusive root-cause diagnosis or production assurance.
+
+## Canonical RDB v1 decode conformance (#65)
+
+```sh
+cargo test --locked -p rystemdb-core --test rdb_compat
+(cd src/libraries/typescript/rystemdb-client && npm test)
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
+```
+
+The codec validators reject **noncanonical descending object keys** in Rust,
+.NET and TypeScript, comparing raw UTF-8 bytes including BMP U+E000 versus
+astral U+1F600. Duplicate-key errors remain distinct, nested objects are
+checked recursively, and the test corpus includes every descending ASCII
+key pair from a..z. A conforming canonical document keeps its previous bytes;
+source-only decoders now reject previously accepted out-of-order input.
+See [RDB_TYPED_PROTOCOL.md](RDB_TYPED_PROTOCOL.md) and ADR 0010.
+Parent #43/#38/#11 remain OPEN for broader codec, fuzz and protocol work.

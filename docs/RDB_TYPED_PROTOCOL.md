@@ -23,6 +23,24 @@ Every value begins with ASCII `RDB\0` (hex `52 44 42 00`) and format version `01
 
 Object fields are encoded in **UTF-8 byte lexicographic order**, matching Rust `BTreeMap<String,Value>`. In .NET, native ordinal UTF-16 sorting gives a different order for some supplementary characters; the codec sorts by UTF-8 bytes. The TypeScript codec does the same. An explicit `null` field (tag `00`) is distinct from a completely absent field.
 
+**Strict decode rule (#65):** every object's key sequence MUST be strictly
+increasing by the raw UTF-8 byte comparison, recursively at every nesting
+depth. Decoders in Rust, .NET and TypeScript now reject decreasing distinct
+keys as **noncanonical**, rather than accepting several byte encodings of one
+logical object. Duplicate keys remain rejected with their separate existing
+duplicate-key errors. Compare **UTF-8 bytes**, not UTF-16 order or Unicode
+locale collation: a BMP U+E000 key (`ee 80 80`) sorts **before** the astral
+U+1F600 key (`f0 9f 98 80`). Encoding continues to sort fields; this rule
+does not change the wire envelope or any tag/version numbers.
+
+**Compatibility boundary:** earlier experimental source-only decoders accepted
+out-of-order *distinct* keys even though encoders always produced sorted keys
+and this protocol document prescribed canonical ordering. Those previously
+accepted **noncanonical input bytes now fail closed**. Existing conforming
+RDB v1 documents remain byte-identical. Do not silently recanonicalize
+untrusted invalid bytes or deploy a new public format without a migration /
+version-negotiation policy under #43/#38.
+
 ### Language mappings
 
 | RDB type | Rust | C#/.NET | TypeScript |
@@ -62,7 +80,7 @@ The literal is asserted independently in `src/rystemdb-core/tests/rdb_compat.rs`
 
 - Maximum complete encoded value: **64 MiB**. The RPC envelope separately limits a single request/response payload to **16 MiB**, so not every locally valid RDB value can be sent in one RPC frame.
 - Maximum recursive nesting depth: **64** (root depth 0).
-- Reject truncated length prefixes and bodies, malformed UTF-8, unsupported format version/tags, duplicate object keys, unknown/trailing bytes, non-finite floats, invalid references and excessive sizes before allocating unreasonable buffers.
+- Reject truncated length prefixes and bodies, malformed UTF-8, unsupported format version/tags, **duplicate or out-of-order object keys**, unknown/trailing bytes, non-finite floats, invalid references and excessive sizes before allocating unreasonable buffers.
 - JavaScript and .NET writers reject isolated invalid UTF-16 surrogate sequences rather than substituting a Unicode replacement character.
 - **Leading `U+FEFF` in a UTF-8 string is data**, not a removable file BOM; TypeScript readers deliberately set `TextDecoder(..., {fatal:true, ignoreBOM:true})` to preserve it, confirmed by TDD regression #44.
 - The primitive tagged format is compatible with the experimental binary row codec; schema field IDs, decimal128, compression, lazy field projection and versioned migrations remain future engine work (#33).

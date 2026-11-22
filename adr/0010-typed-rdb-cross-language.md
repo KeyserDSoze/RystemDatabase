@@ -23,3 +23,28 @@ Independent literal golden vector for a nested typed object with native bytes, a
 C#/TS libraries are still **codecs only**, not actual network clients. EF Core provider, secure remote transport and cluster-aware reads are not implemented. This is not a claim of production readiness or high-performance benchmarks without measurements.
 
 [Wire specification](../docs/RDB_TYPED_PROTOCOL.md).
+
+## Enforce canonical object ordering on decode (#65, source experimental)
+
+The v1 format always specified UTF-8 byte-lexicographic ordering for object
+keys, but its three independent decoders previously accepted decreasing
+**distinct** field names. Such noncanonical inputs have multiple byte strings
+for a single decoded map, undermining stable hashes and typed-document
+interoperability. The wire format itself stays `RDB\\0` version 1.
+
+All three decoders now compare each newly decoded field name's UTF-8 bytes
+against the preceding wire field, require strict increase and preserve the
+separate duplicate-key error. Rust String ordering is UTF-8 byte ordering;
+C# uses byte-span comparison (not UTF-16 ordinal string comparison); JS
+encodes keys with strict UTF-8 and uses the existing byte comparator. The
+existing 64 MiB input and maximum nesting depth 64 remain unchanged.
+
+TDD tests use a single object, a nested object, Unicode BMP U+E000 vs astral
+U+1F600, plus all descending pairs of ASCII a..z; unchanged canonical
+golden vectors and real Rust/.NET/Node live CRUD continue to run in CI.
+
+**Deliberately stricter compatibility behavior:** older unreleased/experimental
+decoders accepted some noncanonical binary documents. Those inputs now fail
+rather than being silently normalized. A future public canonical format,
+permanent on-disk migration or network version negotiation requires a
+separate acceptance under #43/#38. This does not certify production security.
