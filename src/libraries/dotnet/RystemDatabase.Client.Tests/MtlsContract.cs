@@ -26,13 +26,13 @@ internal static class MtlsContract
             IPAddress.Loopback, server.Port, "localhost", root, WriterToken),
             "mTLS server accepted bearer token alone");
 
-        // This helper invokes the existing .NET TLS method in RED: it has no
-        // way to present the offered X509 client cert/key to the Rust listener.
-        // Change to ConnectMtlsAsync when the actual API is implemented.
+        // The real .NET SslStream must present the offered signed client
+        // identity; never infer authorization from the 32-byte token alone.
         async Task<RystemLoopbackClient> Connect(Identity identity, byte[]? token = null,
             string serverName = "localhost", string? ca = null)
-            => await RystemLoopbackClient.ConnectTlsAsync(IPAddress.Loopback, server.Port,
-                serverName, ca ?? root, token ?? WriterToken);
+            => await RystemLoopbackClient.ConnectMtlsAsync(IPAddress.Loopback, server.Port,
+                serverName, ca ?? root, identity.Certificate, identity.PrivateKey,
+                token ?? WriterToken);
 
         await DeniedConnectAsync(() => Connect(test.WrongIssuer), "untrusted client issuer");
         await DeniedConnectAsync(() => Connect(test.WrongEku), "wrong clientAuth EKU");
@@ -45,7 +45,43 @@ internal static class MtlsContract
         await DeniedConnectAsync(() => Connect(writer, ca:test.WrongServerRoot),
             "untrusted server issuer");
 
-        // RED fails here with a real TLS client-certificate-required alert.
+        // #69: malformed/bad-pair client credentials must be rejected before
+        // any TCP connect, so use a deliberately closed port 1 for these.
+        await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(
+            IPAddress.Loopback, 1, "localhost", root, writer.Certificate, "", WriterToken),
+            "missing client private key path");
+        await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(
+            IPAddress.Loopback, 1, "localhost", root, writer.Certificate,
+            test.Reader.PrivateKey, WriterToken), "mismatched client certificate/key");
+        var hugeCertificate = Path.Combine(test.DirectoryPath, "oversized-client.pem");
+        File.WriteAllText(hugeCertificate, new string('x', 65537));
+        await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(
+            IPAddress.Loopback, 1, "localhost", root, hugeCertificate,
+            writer.PrivateKey, WriterToken), "oversized client certificate");
+        if (!OperatingSystem.IsWindows())
+        {
+            var looseKey = Path.Combine(test.DirectoryPath, "loose-client.key");
+            File.Copy(writer.PrivateKey, looseKey);
+            File.SetUnixFileMode(looseKey, UnixFileMode.UserRead |
+                UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+            await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(
+                IPAddress.Loopback, 1, "localhost", root, writer.Certificate,
+                looseKey, WriterToken), "client key group readable");
+            var linkedKey = Path.Combine(test.DirectoryPath, "symlink-client.key");
+            File.CreateSymbolicLink(linkedKey, writer.PrivateKey);
+            await ExpectBadPemAsync(() => RystemLoopbackClient.ConnectMtlsAsync(
+                IPAddress.Loopback, 1, "localhost", root, writer.Certificate,
+                linkedKey, WriterToken), "client private key symlink");
+        }
+        try
+        {
+            await RystemLoopbackClient.ConnectMtlsAsync(IPAddress.Parse("192.0.2.9"),
+                server.Port, "localhost", root, writer.Certificate,
+                writer.PrivateKey, WriterToken);
+            throw new Exception("mTLS client permitted a non-loopback target");
+        }
+        catch (ArgumentException) { }
+
         await using var admin = await Connect(writer);
         await using var reader = await Connect(test.Reader);
         await admin.PingAsync();
@@ -93,6 +129,19 @@ internal static class MtlsContract
         }
     }
 
+    private static async Task ExpectBadPemAsync(
+        Func<Task<RystemLoopbackClient>> action, string reason)
+    {
+        try
+        {
+            await using var unexpected = await action();
+            throw new Exception("mTLS accepted invalid client PEM: " + reason);
+        }
+        catch (ArgumentException) { }
+        // Socket errors are deliberately NOT accepted: validation must run
+        // before the deliberately unreachable port is ever contacted.
+    }
+
     private static async Task DeniedOperationAsync(Func<Task> op, string reason)
     {
         try { await op(); throw new Exception(reason); }
@@ -102,6 +151,7 @@ internal static class MtlsContract
     private sealed class Fixture : IDisposable
     {
         private readonly string _root;
+        public string DirectoryPath => _root;
         private readonly string _serverCertificate;
         private readonly string _serverKey;
         private readonly string _tokenAcl;

@@ -98,9 +98,75 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
     /// hostname and negotiated TLS version have been verified.
     /// This is not a remote/mTLS production SDK.
     /// </summary>
-    public static async Task<RystemLoopbackClient> ConnectTlsAsync(
+    public static Task<RystemLoopbackClient> ConnectTlsAsync(
         IPAddress address, int port, string serverName, string trustedCaFile, byte[] token,
         CancellationToken cancellationToken = default)
+        => ConnectTlsInternalAsync(address, port, serverName, trustedCaFile, token,
+            clientCertificateFile: null, clientPrivateKeyFile: null, cancellationToken);
+
+    /// <summary>
+    /// #69: opt-in source-only localhost TLS1.3 mTLS. The native .NET TLS
+    /// stack presents the explicitly supplied client X.509 cert and matching
+    /// private PEM key; the Rust server independently verifies its single
+    /// URI SAN principal and intersects it with the separately sent token.
+    /// File paths are only used for local loading, never sent in HELLO.
+    /// No external address, certificate validation bypass or TLS fallback.
+    /// </summary>
+    public static Task<RystemLoopbackClient> ConnectMtlsAsync(
+        IPAddress address, int port, string serverName, string trustedCaFile,
+        string clientCertificateFile, string clientPrivateKeyFile, byte[] token,
+        CancellationToken cancellationToken = default)
+        => ConnectTlsInternalAsync(address, port, serverName, trustedCaFile, token,
+            clientCertificateFile, clientPrivateKeyFile, cancellationToken);
+
+    private static X509Certificate2 LoadClientIdentity(
+        string certificateFile, string privateKeyFile)
+    {
+        static void CheckFile(string path, string name, bool secret)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("A client " + name + " PEM file is required");
+            var file = new FileInfo(path);
+            // Fail closed on path links/directories; a mandatory explicit
+            // client private key is never allowed to come from a symlink.
+            if (!file.Exists || file.LinkTarget is not null ||
+                (file.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0 ||
+                file.Length is <= 0 or > 65536)
+                throw new ArgumentException("Invalid or oversized client " + name + " PEM");
+            if (secret && !OperatingSystem.IsWindows())
+            {
+                var forbidden = UnixFileMode.GroupRead | UnixFileMode.GroupWrite |
+                    UnixFileMode.GroupExecute | UnixFileMode.OtherRead |
+                    UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+                if ((File.GetUnixFileMode(path) & forbidden) != 0)
+                    throw new ArgumentException("Client private key file permissions are too broad");
+            }
+        }
+
+        CheckFile(certificateFile, "certificate", false);
+        CheckFile(privateKeyFile, "private key", true);
+        try
+        {
+            // Standard X509 parser checks the matching private key before
+            // even connecting. Never reveal paths/PEM bytes in diagnostics.
+            var cert = X509Certificate2.CreateFromPemFile(certificateFile, privateKeyFile);
+            if (!cert.HasPrivateKey)
+            {
+                cert.Dispose();
+                throw new ArgumentException("Client certificate has no matching private key");
+            }
+            return cert;
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            throw new ArgumentException("Invalid or mismatched client certificate/private key PEM");
+        }
+    }
+
+    private static async Task<RystemLoopbackClient> ConnectTlsInternalAsync(
+        IPAddress address, int port, string serverName, string trustedCaFile, byte[] token,
+        string? clientCertificateFile, string? clientPrivateKeyFile,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(address);
         if (!IPAddress.IsLoopback(address))
@@ -118,6 +184,14 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
         if (new FileInfo(trustedCaFile).Length is <= 0 or > 65536)
             throw new ArgumentException("Invalid TLS root CA PEM length", nameof(trustedCaFile));
 
+        // Pairing is mandatory: neither a partial identity nor a token alone
+        // can silently downgrade an explicitly requested mTLS connection.
+        if ((clientCertificateFile is null) != (clientPrivateKeyFile is null))
+            throw new ArgumentException("Client certificate and private key paths must both be supplied");
+        using var clientIdentity = clientCertificateFile is not null
+            ? LoadClientIdentity(clientCertificateFile, clientPrivateKeyFile!)
+            : null;
+
         var secret = token.ToArray();
         using var ca = X509CertificateLoader.LoadCertificateFromFile(trustedCaFile);
         var chainPolicy = new X509ChainPolicy
@@ -133,6 +207,11 @@ public sealed class RystemLoopbackClient : IAsyncDisposable
             // legacy SecureTransport stack) for TLS1.3-only connections.
             EnabledSslProtocols = SslProtocols.Tls13,
             CertificateChainPolicy = chainPolicy,
+            // Present client identity only when ConnectMtlsAsync opted in.
+            // The server verifies issuer, EKU and URI SAN; .NET verifies
+            // server CA and hostname independently, without callbacks.
+            ClientCertificates = clientIdentity is null ? null :
+                new X509CertificateCollection { clientIdentity },
             AllowRenegotiation = false
         };
         // .NET 10 requires an explicit opt-in to Network.framework to support
