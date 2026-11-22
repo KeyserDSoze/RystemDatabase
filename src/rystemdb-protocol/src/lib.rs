@@ -165,15 +165,29 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
     Ok(Frame { kind, operation, status, request_id, payload: bytes[HEADER_LEN..].to_vec() })
 }
 
-/// Read one frame from a stream. The body size is checked BEFORE allocation,
-/// and a socket may contain additional concatenated frames afterward.
+/// Read one frame from a stream. The global 16 MiB body size is checked
+/// BEFORE allocation, and concatenated frames can follow this one.
 pub fn read_frame<R: Read>(reader: &mut R) -> Result<Frame, ProtocolError> {
+    read_frame_with_limit(reader, MAX_PAYLOAD_BYTES)
+}
+
+/// #72: A caller may set a tighter framing budget (e.g. the tiny RSWP HELLO
+/// before authentication) without weakening or duplicating ANY protocol
+/// header validation. The declared body length is rejected from the 24-byte
+/// header BEFORE allocating memory or attempting to read a single body byte.
+/// A later authenticated frame may still use the standard 16 MiB limit.
+pub fn read_frame_with_limit<R: Read>(
+    reader: &mut R, max_payload: usize,
+) -> Result<Frame, ProtocolError> {
     let mut header = [0_u8; HEADER_LEN];
     match reader.read_exact(&mut header) {
         Ok(()) => {}
         Err(err) => return Err(map_io(err)),
     }
     let (kind, operation, status, request_id, len) = header_info(&header)?;
+    if len > max_payload {
+        return Err(ProtocolError::TooLarge);
+    }
     let mut payload = vec![0_u8; len];
     reader.read_exact(&mut payload).map_err(map_io)?;
     Ok(Frame { kind, operation, status, request_id, payload })

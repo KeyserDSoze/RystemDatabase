@@ -7,7 +7,7 @@
 use crate::auth::{grants_for_mtls_principal, load_mtls_principal_policy, AuthPolicy, Grant};
 use crate::tls;
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
-use rystemdb_protocol::{read_frame, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
+use rystemdb_protocol::{read_frame, read_frame_with_limit, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
 use rystemdb_storage::DocumentStore;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -20,6 +20,10 @@ const WORKERS: usize = 8;
 const BACKLOG: usize = 32;
 const MAX_REQUESTS_PER_CONNECTION: usize = 128;
 const TIMEOUT: Duration = Duration::from_secs(3);
+// #72: HELLO is either two version bytes (local developer mode) or
+// 1,0 + u16(32) + a 32-byte bearer token. Reject a larger *declared*
+// pre-authentication frame before allocating its body or holding a worker.
+const MAX_PRE_AUTH_PAYLOAD_BYTES: usize = 36;
 
 const OK: u16 = 0;
 const NOT_FOUND: u16 = 1;
@@ -239,9 +243,18 @@ fn handle_client_frames<S: Read + Write>(
     let mut greeted = false;
     let mut grants: Option<Vec<Grant>> = None;
     for _ in 0..MAX_REQUESTS_PER_CONNECTION {
-        let request = match read_frame(stream) {
+        // #72: unauthenticated clients must not reserve the generic
+        // 16 MiB frame buffer or pin a worker simply by declaring a huge
+        // HELLO body. Once a valid HELLO is authenticated, retain the
+        // unchanged 16 MiB CRUD frame limit for the same connection.
+        let frame = if greeted {
+            read_frame(stream)
+        } else {
+            read_frame_with_limit(stream, MAX_PRE_AUTH_PAYLOAD_BYTES)
+        };
+        let request = match frame {
             Ok(request) => request,
-            Err(_) => return false, // malformed/version-mismatched/partial/closed: fail closed
+            Err(_) => return false, // invalid/oversized/truncated frames fail closed
         };
         if request.kind != Kind::Request {
             return false;

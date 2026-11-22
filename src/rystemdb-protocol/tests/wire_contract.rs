@@ -1,5 +1,5 @@
 use rystemdb_protocol::{
-    decode, encode, read_frame, write_frame, Frame, Kind, Operation, ProtocolError,
+    decode, encode, read_frame, read_frame_with_limit, write_frame, Frame, Kind, Operation, ProtocolError,
     HEADER_LEN, MAX_PAYLOAD_BYTES,
 };
 use std::io::Cursor;
@@ -106,4 +106,69 @@ fn tdd_empty_body_and_large_id_roundtrip() {
         let frame = Frame::request(op, u64::MAX, Vec::new());
         assert_eq!(decode(&encode(&frame).unwrap()), Ok(frame));
     }
+}
+
+
+// #72: a pre-authentication protocol consumer can cap frame bodies at the
+// authenticated HELLO length, without changing normal post-HELLO CRUD.
+#[test]
+fn tdd_bounded_stream_reader_checks_header_before_touching_payload() {
+    let authenticated_hello = Frame::request(Operation::Hello, 1, {
+        let mut body = vec![1, 0, 0, 32];
+        body.extend_from_slice(&[0x11; 32]);
+        body
+    });
+    let wire = encode(&authenticated_hello).unwrap();
+    assert_eq!(wire.len(), HEADER_LEN + 36);
+    assert_eq!(
+        read_frame_with_limit(&mut Cursor::new(wire.clone()), 36),
+        Ok(authenticated_hello),
+        "exact 36-byte bearer HELLO must remain readable"
+    );
+    let mut restricted = Cursor::new(wire);
+    assert_eq!(read_frame_with_limit(&mut restricted, 35), Err(ProtocolError::TooLarge));
+    assert_eq!(restricted.position(), HEADER_LEN as u64,
+        "overbudget HELLO must be rejected after header, without a body read");
+
+    // The header claims 16 MiB, but no body was sent at all. Must return
+    // TooLarge rather than Incomplete or waiting to consume the body.
+    let mut header = encode(&Frame::request(Operation::Hello, 2, vec![])).unwrap();
+    header[20..24].copy_from_slice(&(MAX_PAYLOAD_BYTES as u32).to_be_bytes());
+    let mut malicious = Cursor::new(header);
+    assert_eq!(
+        read_frame_with_limit(&mut malicious, 36),
+        Err(ProtocolError::TooLarge),
+        "pre-auth length cap must take precedence over a missing body"
+    );
+    assert_eq!(malicious.position(), HEADER_LEN as u64);
+
+    // A complete 37-byte body must also be rejected *without consuming it*.
+    let mut too_many = Cursor::new(encode(
+        &Frame::request(Operation::Hello, 3, vec![0; 37])
+    ).unwrap());
+    assert_eq!(read_frame_with_limit(&mut too_many, 36), Err(ProtocolError::TooLarge));
+    assert_eq!(too_many.position(), HEADER_LEN as u64);
+
+    // The original authenticated/post-HELLO reader still accepts frames
+    // above 36 bytes and preserves their complete opaque payload.
+    let normal = Frame::request(Operation::Put, 4, vec![0x80; 4096]);
+    assert_eq!(read_frame(&mut Cursor::new(encode(&normal).unwrap())), Ok(normal));
+}
+
+#[test]
+fn tdd_bounded_stream_reader_preserves_header_errors_and_multi_frame_streams() {
+    let mut payload = Vec::new();
+    write_frame(&mut payload, &Frame::request(Operation::Hello, 1, vec![1,0])).unwrap();
+    write_frame(&mut payload, &Frame::request(Operation::Ping, 2, vec![])).unwrap();
+    let mut input = Cursor::new(payload);
+    assert_eq!(read_frame_with_limit(&mut input, 36),
+        Ok(Frame::request(Operation::Hello, 1, vec![1,0])));
+    assert_eq!(read_frame_with_limit(&mut input, 0),
+        Ok(Frame::request(Operation::Ping, 2, vec![])));
+    assert_eq!(read_frame_with_limit(&mut input, 36), Err(ProtocolError::Incomplete));
+
+    let mut invalid = encode(&Frame::request(Operation::Hello, 1, vec![1,0])).unwrap();
+    invalid[4] = 2;
+    assert_eq!(read_frame_with_limit(&mut Cursor::new(invalid), 36),
+        Err(ProtocolError::UnsupportedVersion));
 }
