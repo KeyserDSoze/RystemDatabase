@@ -128,7 +128,9 @@ impl Fixture {
         fs::write(&serial, "01\n").unwrap();
         fs::write(&db, "").unwrap();
         let ca_conf=self.path(&format!("{name}-sign.cnf"));
-        let root=text_path(&self.root);
+        // OpenSSL configuration paths use forward slashes on all OSes,
+        // including Windows, rather than backslash escape sequences.
+        let root=text_path(&self.root).replace('\\', "/");
         fs::write(&ca_conf,format!(
             "[ca]\ndefault_ca=CA_default\n[CA_default]\ndatabase={root}/{name}-index.txt\nserial={root}/{name}-serial.txt\nnew_certs_dir={root}\ncertificate={root}/client-ca.pem\nprivate_key={root}/client-ca.key\ndefault_md=sha256\npolicy=policy_any\n[policy_any]\ncommonName=supplied\n"
         )).unwrap();
