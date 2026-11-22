@@ -1,6 +1,6 @@
-# ADR 0015 — Canonical mTLS principal-policy contract (validation-only)
+# ADR 0015 — Canonical mTLS client principal-policy contract
 
-Status: accepted for parser/schema only; TLS client certificate enforcement is pending.
+Status: accepted experimental loopback-only source implementation (#57/#58/#60/#61). Production remote identity remains out of scope.
 Issues: #57 (this narrow implementation), #56, #55 and #39 (remaining security).
 
 ## Context
@@ -51,3 +51,26 @@ principal URI SAN extraction and ACL intersection are not yet active. This
 prevents accidental use of bearer tokens to escalate a merely TLS-verified
 client. No private test client keys are committed to the repository in this
 milestone. All existing TLS-only and plaintext localhost entry points remain.
+
+## Verified URI SAN principal intersection (#61)
+
+Rustls `WebPkiClientVerifier` enforces client chain, clientAuth EKU and time
+before the application can obtain `peer_certificates()`. The server reads
+**only the verified leaf**, reparses it using `rustls-webpki 0.103.17`
+(which Rustls already depends on), and rejects missing, noncanonical,
+unknown or multiple URI SAN principals. The 32-byte HELLO token is separately
+authenticated against the private bearer-token ACL; the resulting grants
+are **intersected** with the exact canonical URI principal's grants, and
+a disjoint intersection fails HELLO. Per-document r/w authorization happens
+before any store read or modification. No CN-based, wildcard or token-only
+privilege escalation is permitted in this mode.
+
+The certificate CA root, server CA identity and bearer token policy are
+configured independently, and all files are read before opening storage.
+Live Rust SDK `connect_mtls` tests generate private CA/client identities
+per test in temporary directories; these secrets are never committed.
+
+Remain open: production-grade revocation/rotation and audit, additional
+strict malformed-name conformance, Windows ACL checks, rate/DoS protection,
+non-loopback threat model, .NET/Node client-certificate provisioning (#55/#39).
+This ADR does not approve remote listening or publish SDK artifacts.

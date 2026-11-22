@@ -39,9 +39,9 @@ The Rust client uses `rystemdb-protocol::crud::encode_key` for requests (the nat
 
 ## Verified TLS 1.3 on localhost (source preview)
 
-The Rust client now exposes `LocalClient::connect_tls(addr, "localhost", trusted_ca_path, &raw32_token)`, which builds a TLS1.3-only session with **strict CA chain and DNS SAN verification** before sending the token or any RSWP frame. It works only with `rpc-serve --tls-cert ... --tls-key ... --auth-file ...`; plaintext connection methods never silently upgrade. Actual certificate validation, wrong-CA/wrong-name refusal and typed CRUD are exercised in `cargo test -p rystemdb-cli --test rpc_tls` on all 3 OS. See [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md). No secure remote bind, mTLS, async pool or released SDK.
+The Rust client now exposes `LocalClient::connect_tls(addr, "localhost", trusted_ca_path, &raw32_token)`, which builds a TLS1.3-only session with **strict CA chain and DNS SAN verification** before sending the token or any RSWP frame. It works only with `rpc-serve --tls-cert ... --tls-key ... --auth-file ...`; plaintext connection methods never silently upgrade. Actual certificate validation, wrong-CA/wrong-name refusal and typed CRUD are exercised in `cargo test -p rystemdb-cli --test rpc_tls` on all 3 OS. See [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md). No secure remote bind, production mTLS, async pool or released SDK.
 
-## Explicit local mTLS client certificate transport (#60; not a working database connection)
+## Explicit local mTLS client certificate transport (#60/#61)
 
 The Rust SDK now has a separate
 `LocalClient::connect_mtls(addr, server_name, server_ca_path,
@@ -59,17 +59,16 @@ inspection and opening. **Windows NTFS ACL checks are not implemented**;
 restrict key permissions yourself and do not assume production credential
 security. TLS key contents, filenames and bearer-token bytes are never logged.
 
-**Important:** the real `rpc-serve --mtls-policy ... --mtls-ca ...` listener
-currently **denies all RSWP traffic after TLS verification** (#58). This
-means `connect_mtls` cannot yet complete HELLO/CRUD against that server,
-even with a valid certificate; verified URI SAN principal binding and token
-ACL intersection are still open in [#59](https://github.com/KeyserDSoze/RystemDatabase/issues/59).
-The integration test uses an isolated in-process Rustls peer to verify that
-the new client presents a valid certificate and exchanges HELLO/PING. Another
-test contacts the **real Rust CLI** with a valid ephemeral client certificate
-to prove it does not bypass the deny-all gate. Test certificates and keys
-are generated in temporary directories using OpenSSL, **never committed**.
-Run `cargo test --locked -p rystemdb-cli --test rpc_mtls_sdk`.
+The real `rpc-serve --mtls-policy ... --mtls-ca ...` listener now
+permits HELLO and CRUD **only when** a trusted client leaf contains exactly
+one canonical, exact-match `spiffe://rystemdb.local/client/<id>` URI SAN
+whose principal ACL grants intersect with a valid, independent 32-byte bearer
+token ACL. A read-only certificate cannot gain write permission from an RW
+token; unknown principals, wrong issuers/EKU and wrong tokens are denied.
+`rpc_mtls_identity` verifies this using a real Rust server and freshly
+generated OpenSSL client certificates. `rpc_mtls_sdk` covers Rustls transport
+and wrong token denial. No private test client keys are committed.
 
-This source-only SDK method is not a production mTLS database API, not a
-remote deployment feature and not released as a package.
+This is a **source-only experimental localhost** SDK, not production remote
+mTLS, and is not released as a package. Revocation, Windows ACL audit, .NET/
+Node mTLS client-cert support, rotation and rate limiting remain open.

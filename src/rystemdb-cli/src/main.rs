@@ -22,13 +22,13 @@ Usage:\n\
   rystemdb document delete --data PATH --collection NAME --id ID\n\
   rystemdb serve [--listen 127.0.0.1:8787]\n\
   rystemdb rpc-serve --data PATH [--listen 127.0.0.1:8790] [--auth-file PRIVATE_PATH] [--tls-cert CERT --tls-key KEY]\n\
-  rystemdb rpc-serve --mtls-policy POLICY --mtls-ca CLIENT_CA (TLS verification gate; no RSWP authorization)\n\
+  rystemdb rpc-serve --mtls-policy POLICY --mtls-ca CLIENT_CA (TLS verification gate; URI principal/token intersection)\n\
   rystemdb --help\n\
 PUT accepts JSON from stdin (--json -) or a local file (--json FILE).\n\
 --typed-json explicitly interprets $rystem tagged references/bytes.\n\
 The CLI persists binary documents; HTTP serve exposes health only; rpc-serve has local binary CRUD.\n\
 RPC is localhost-only; --auth-file enables ACL, TLS 1.3 requires --tls-cert and --tls-key.\n\
-No SQL, usable mTLS RPC, secure remote access, distributed RPC, or multi-document transactions yet.\n"
+No SQL, production/remote mTLS, secure remote access, distributed RPC, or multi-document transactions yet.\n"
 }
 
 fn response_for(request: &[u8]) -> &'static [u8] {

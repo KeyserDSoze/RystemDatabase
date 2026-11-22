@@ -2,7 +2,7 @@
 
 Implemented in source on `main`: Rust TLS [#51](https://github.com/KeyserDSoze/RystemDatabase/issues/51), .NET/Node TLS [#52](https://github.com/KeyserDSoze/RystemDatabase/issues/52), and macOS TLS backend fix [#53](https://github.com/KeyserDSoze/RystemDatabase/issues/53), under still-open security parent [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
-**This is real certificate-verified TLS 1.3 but NOT a remotely deployable database service.** The server and Rust client still reject every non-loopback address; mTLS, secure production identity/rotation/revocation, Windows ACL audit, rate limiting, cluster authorization and public network access are not implemented. The published `v0.1.2` binaries do not contain `rpc-serve` or TLS.
+**This is real certificate-verified TLS 1.3 but NOT a remotely deployable database service.** The server and Rust client still reject every non-loopback address; production mTLS identity rotation/revocation, Windows ACL audit, rate limiting, cluster authorization and public network access are not implemented. The published `v0.1.2` binaries do not contain `rpc-serve` or TLS.
 
 ## Source build and configuration
 
@@ -57,7 +57,7 @@ cargo clippy --workspace --locked --all-targets -- -D warnings
 
 The real-process integration suite starts the executable with `--listen 127.0.0.1:0` to avoid ephemeral port races and verifies TLS 1.3 Rust-client HELLO/PING/native typed CRUD, wrong trusted CA, wrong hostname, plaintext RSWP against the TLS port, missing/incorrect bearer tokens, malformed/mismatched key/certificate, insecure TLS config, and non-loopback bind denial. The same Cargo suite executes on Linux, macOS and Windows in CI.
 
-**Important remaining risks:** Publicly exposed bind remains prohibited even with TLS; the opt-in mTLS verifier gate is not a usable database service (no URI SAN authorization or mTLS CRUD), no cluster admission control, no certificate expiry/rotation/revocation workflow, no Windows ACL validation, no per-user rate limits, no full parser fuzzing or comprehensive remote threat model. Compromised local credentials and on-disk files are outside this transport layer's protection. Complete [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) before opening to other machines. [RSWP protocol](WIRE_PROTOCOL.md) | [Local bearer-token policy](LOCAL_AUTH.md) | [Local SDK guide](LOCAL_CLIENTS.md).
+**Important remaining risks:** Publicly exposed bind remains prohibited even with TLS; source-only, local mTLS principal/token ACLs are experimental and lack operational revocation/rotation, no cluster admission control, no certificate expiry/rotation/revocation workflow, no Windows ACL validation, no per-user rate limits, no full parser fuzzing or comprehensive remote threat model. Compromised local credentials and on-disk files are outside this transport layer's protection. Complete [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) before opening to other machines. [RSWP protocol](WIRE_PROTOCOL.md) | [Local bearer-token policy](LOCAL_AUTH.md) | [Local SDK guide](LOCAL_CLIENTS.md).
 
 
 ## C#/.NET 10: verified SslStream, explicit root CA and SAN
@@ -80,7 +80,7 @@ The .NET client uses `SslStream` and `SslClientAuthenticationOptions` with `Enab
 
 **macOS .NET 10:** legacy SecureTransport does not support TLS1.3; the SDK opts into Apple's Network.framework using `AppContext.SetSwitch("System.Net.Security.UseNetworkFramework", true)`. If your application already initialized SslStream, set this switch at **process startup**, or use environment variable `DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1`; CI sets this for macOS. No TLS1.2 fallback is permitted. This behavior is tracked and tested in #53.
 
-The test fixture CA intentionally has no CRL. The client therefore sets `RevocationMode = NoCheck` **only within this experimental localhost prototype**. Proper revocation, pinning/rotation policies and mTLS are remaining #39 requirements.
+The test fixture CA intentionally has no CRL. The client therefore sets `RevocationMode = NoCheck` **only within this experimental localhost prototype**. Proper revocation, pinning/rotation policies and production-grade mTLS are remaining #39 requirements.
 
 ## Node.js 22+: certificate-verified node:tls client
 
@@ -111,19 +111,22 @@ Node uses `node:tls`, `minVersion: "TLSv1.3"`, `maxVersion: "TLSv1.3"`, `rejectU
 
 `TlsContract.cs` and `tests/tls.test.mjs` launch the **real Rust executable** on Linux, macOS and Windows and verify successful TLS HELLO/PING, nested typed binary CRUD (bytes, references, i64, Unicode), concurrent requests, collection read/write denial, wrong CA/SAN, malformed credential, plaintext-to-TLS refusal and persistence across separate server processes. Additional **public** expiry fixtures ensure both languages reject server certificates whose notBefore/notAfter window excludes the current date, even when CA and SAN match. An RSWP Unauthorized response is explicitly flushed before the Rust server closes its TLS stream (#54).
 
-**These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. No mTLS, centralized identities, certificate/key rotation, revocation workflow, secure connection pools, released NuGet/npm SDK packages or service discovery exist. [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remains open.
+**These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. Source-only Rust mTLS exists on loopback, but there is no .NET/Node mTLS client-certificate provisioning, centralized identities, certificate/key rotation, revocation workflow, secure connection pools, released NuGet/npm SDK packages or service discovery. [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remains open.
 
-## mTLS principal policy contract (#57 — validation only)
+## mTLS principal policy and verified URI SAN authorization (#57/#58/#61)
 
 An explicit versioned client-principal policy is recognized by the CLI. With
 only `--mtls-policy`, startup still refuses safely. Supplying BOTH
 `--mtls-policy PRIVATE_PATH` and `--mtls-ca CLIENT_ROOT_PEM`, together with
 `--auth-file` and `--tls-cert/--tls-key`, opts into an **experimental TLS1.3
-client-certificate verification gate** backed by Rustls WebPkiClientVerifier.
-The server verifies the client chain, EKU and validity before any application
-data. **Even a verified client is always denied RSWP requests** until verified
-URI SAN identity extraction + principal/token ACL intersection is implemented.
-This is not usable mTLS CRUD, production authentication or remote access.
+client-certificate authenticated loopback service** backed by Rustls
+WebPkiClientVerifier. The client certificate chain, clientAuth EKU and
+validity are verified *before* extracting a URI SAN from the authenticated
+leaf certificate. Only the exact, canonical, single URI SAN with a matching
+principal policy, AND a separately authenticated 32-byte HELLO bearer token,
+can grant RSWP collection access. Granted operations are the intersection
+of the two ACLs; neither certificate nor token grants access by itself.
+This is source-only, not production remote mTLS or released SDK software.
 
 The first line must be `rystem-mtls-principal-acl-v1`. Each nonempty subsequent
 line must have exactly three ASCII fields separated by one space:
@@ -134,7 +137,7 @@ spiffe://rystemdb.local/client/reader orders r
 spiffe://rystemdb.local/client/writer orders rw
 ```
 
-The URI is a **planned exact-match SPIFFE-style URI SAN identity**, not a CN,
+The URI is an **exact-match SPIFFE-style URI SAN identity**, not a CN,
 HTTP credential, or human-readable display name. The fixed experimental prefix
 is `spiffe://rystemdb.local/client/` followed by 1–64 lowercase ASCII letters,
 digits, underscores or hyphens. Percent encoding, extra path segments, queries,
@@ -144,14 +147,21 @@ At most 128 rules in a nonempty, regular, UTF-8 ASCII file of at most 64 KiB.
 Duplicate (principal, collection) rules and insecure Unix permissions/symlinks
 are rejected without echoing principals in errors.
 
-This is **only a future contract**: no code yet extracts verified client URI
-SANs or grants authenticated mTLS RSWP requests. Rustls now enforces a
-client-certificate handshake in the explicitly configured mTLS gate, but
-verified URI SAN authorization and HELLO grant intersection are still pending. These are remaining
-[#56](https://github.com/KeyserDSoze/RystemDatabase/issues/56) and
-[#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) acceptance gates.
-No non-loopback listener or production remote access is enabled. The current
-policy parser does not enforce Windows NTFS access-control lists.
+The server reads only the **verified peer end-entity leaf** obtained from
+Rustls after completing the mandatory TLS1.3 client-certificate handshake.
+It uses the pre-existing `rustls-webpki` X.509 parser to extract URI SAN
+values, requires exactly one canonical URI principal and exact rules
+(no case folding or percent decoding), then computes the strict
+**certificate principal ACL ∩ bearer-token ACL** during HELLO. Unknown or
+ambiguous principals fail closed. No document read/write is performed if
+either credential or the required collection right is absent.
+
+This localhost-only experimental feature does **not** enable non-loopback
+binding, real certificate revocation/rotation, audited Windows NTFS ACLs,
+public service discovery or production certificate lifecycle management.
+[#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) and
+[#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39)
+remain open.
 
 ## Denied TLS HELLO teardown regression (#54)
 
@@ -168,7 +178,7 @@ rate limiting and security DoS review remain open under #39. The real-process
 Rust/.NET/Node rejection tests must observe actual RSWP status 6, never
 interpret EOF as a successful authorization denial.
 
-### Rustls verified client certificate gate (#58, not yet an mTLS database service)
+### Rustls client certificate principal-bound ACLs (#58/#61, localhost only)
 
 ```sh
 rystemdb rpc-serve --data ./rystem-data --listen 127.0.0.1:8790 \
@@ -179,13 +189,15 @@ rystemdb rpc-serve --data ./rystem-data --listen 127.0.0.1:8790 \
 ```
 
 This listener requires a certificate issued by the **explicit, independently
-selected** client root CA. Rustls checks trust, TLS1.3 and client-auth
-certificate validity/EKU before RSWP. However **it never grants RSWP HELLO,
-PING or document CRUD even to a verified certificate**: verified URI SAN
-identity extraction and applying the grant intersection are still work under
-#56. No token bypass, no name/CN-based authorization and no plaintext fallback
-exist in this mode. Legacy authenticated TLS localhost mode WITHOUT mTLS
-flags is unchanged. Do not use this gate as an operational database server.
+selected** client CA. Rustls checks trust, TLS1.3 and client-auth
+certificate validity/EKU before RSWP. A verified leaf with exactly one
+canonical URI SAN mapped to the private principal ACL can authenticate
+**only with a matching HELLO token**. A `reader orders r` certificate
+principal cannot use a token with `orders rw` to write or delete. Unauthorized
+document requests return status 6 without revealing existence or data; an
+unknown principal cannot complete RSWP HELLO. There is no token-only,
+CN-based, plaintext or non-loopback fallback. Legacy TLS localhost without
+mTLS flags is unchanged. This is NOT an operational production service.
 
 ### Rust SDK client certificate presentation (#60)
 
@@ -196,10 +208,11 @@ permissions are checked on Unix. A real Rustls test peer verifies an ephemeral
 client certificate signed by a separately generated test CA, then exchanges
 RSWP HELLO/PING. No long-term or production private client keys are in git.
 
-**This method does NOT authorize RPC traffic against the current real CLI
-mTLS gate.** Even a correctly verified client certificate is disconnected
-before RSWP HELLO by the server until #59 implements URI SAN principal
-extraction and `cert-grants ∩ bearer-token-grants`. Legacy `connect_tls`
-remains functional; no remote addresses or automatic fallback are allowed.
-`cargo test --locked -p rystemdb-cli --test rpc_mtls_sdk` exercises both
-positive Rustls transport and the real CLI deny-all requirement.
+The real Rust CLI now authorizes `connect_mtls` only after mandatory
+cryptographic certificate verification, single canonical URI SAN identity
+mapping and a successful token HELLO, with intersection of both ACLs (#61).
+`cargo test --locked -p rystemdb-cli --test rpc_mtls_identity` covers real
+process typed CRUD and extensive negative identities using ephemeral OpenSSL
+test-only certificates, plus `rpc_mtls_sdk` for transport and invalid tokens.
+Legacy `connect_tls` remains functional; no remote addresses or automatic
+fallback are allowed.

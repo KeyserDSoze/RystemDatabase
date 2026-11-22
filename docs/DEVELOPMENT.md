@@ -114,7 +114,7 @@ RYSTEMDB_BINARY="$(pwd)/target/debug/rystemdb" bash -c 'cd src/libraries/typescr
 
 CI runs the actual Rust server subprocess and TLS tests on Linux, macOS and Windows. On Windows use `target/debug/rystemdb.exe`; on macOS .NET 10 needs `DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1` before process startup (the SDK also opts in) for TLS1.3. The regression suites reject wrong CA/hostname, expired and future certificates, malformed tokens and plaintext traffic on TLS-only ports. Server flushes RSWP status 6 before closing TLS (#54). Full instructions: [LOCAL_TLS.md](LOCAL_TLS.md). **#39 remains open for nonlocal production security.**
 
-## Experimental client certificate gate (#58, pre-authorization only)
+## Experimental localhost mTLS client-certificate + principal ACL (#58/#61)
 
 ```sh
 cargo test --locked -p rystemdb-cli --test rpc_mtls
@@ -125,11 +125,12 @@ cargo clippy --workspace --locked --all-targets -- -D warnings
 
 The optional `--mtls-policy` and `--mtls-ca` flags together with TLS
 certificate/key and bearer ACL start a localhost TLS1.3 listener requiring
-certificate verification by an explicit client root CA. **No RSWP request is
-authorized on this listener, even if TLS verifies a certificate.** Identity
-extraction from the verified URI SAN and intersection with the token ACL remain
-#56. This is not a usable mTLS client/server, and must not be exposed remotely.
-The previous TLS-only Rust/.NET/Node modes remain active and unchanged.
+certificate verification by an explicit client root CA. The verified leaf's
+single canonical URI SAN is mapped to a principal ACL, intersected with the
+authenticated HELLO token ACL; unauthorized requests are rejected before
+storage access. Real-process negative/positive tests run in `rpc_mtls_identity`
+using ephemeral OpenSSL test-only keys. No external bind or production
+revocation/rotation is available; the original TLS-only SDK modes remain.
 
 ## Rust SDK client certificate transport test (#60)
 
@@ -140,5 +141,10 @@ cargo test --locked -p rystemdb-cli --test rpc_mtls_sdk
 The test runner needs `openssl` in `PATH` for ephemeral private client
 certificate and CA generation; no client identity private key is committed.
 It verifies a real mutual TLS1.3 handshake with a test-only Rustls verifier
-and confirms the current real CLI still denies RSWP in mTLS gate mode.
-`connect_mtls` is not usable CRUD until principal binding under #59.
+and verifies that the real CLI rejects a correctly verified certificate
+when its bearer token is invalid. `rpc_mtls_identity` tests authorized
+and denied CRUD under intersected certificate/token ACLs.
+
+```sh
+cargo test --locked -p rystemdb-cli --test rpc_mtls_identity
+```

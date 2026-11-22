@@ -53,8 +53,8 @@ GitHub Issues are the source of truth, not static checkboxes alone. [Browse open
 - [x] Real TLS1.3 CA+SAN-verified local .NET 10 SslStream and Node 22 node:tls clients with typed CRUD and negative security tests on Linux/macOS/Windows (#52); macOS .NET Network.framework backend (#53)
 - [x] Flush native Rustls RSWP auth-denial replies before closing TLS sessions (#54)
 - [x] Canonical bounded principal policy and fail-closed validation (#57); opt-in Rustls client-certificate verification gate (no RSWP authorization yet, #58)
-- [x] Explicit TLS1.3-only Rust client certificate presentation with bounded protected key files and ephemeral Rustls interop tests (#60); **real mTLS CLI still denies RSWP**
-- [ ] Extract verified URI SAN principal and authorize via intersected certificate/token ACLs, then end-to-end Rust/.NET/Node mTLS (#56/#55)
+- [x] Explicit TLS1.3-only Rust client certificate presentation with bounded protected key files and ephemeral Rustls interop tests (#60)
+- [x] Verified X.509 leaf URI SAN principal and bearer-token ACL intersection for **Rust-only** loopback mTLS typed CRUD; real negative client certificate tests (#61, child #59)\n- [ ] Full mTLS interoperability in .NET/Node and lifecycle/PKI hardening (#55); production remote policies remain #39
 - [ ] Production TLS/mTLS, external identity, token expiry/rotation/revocation, Windows ACL audit, per-user quotas and rate limiting (#39)
 - [ ] Full version-negotiated v1 body compatibility, fuzz/property coverage, cancellation/idempotency policy and multi-OS client SDK release tests (#43/#38)
 - [x] Experimental loopback-only RSWP native TCP binary CRUD server with bounded workers and TDD subprocess tests (#37)
