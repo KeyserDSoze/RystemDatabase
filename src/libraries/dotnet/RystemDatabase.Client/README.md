@@ -25,7 +25,7 @@ await db.PutAsync("users", "u42", value);
 var found = await db.GetAsync("users", "u42");
 ```
 
-**Important limitations:** this is a source-only localhost TCP client without secure remote authentication/mTLS, pooling, multiplexing, query API, idempotent retry guarantees, shard routing, NuGet package publication or EF Core provider. Invalid/outside-loopback address rejected before connect; network failure on a write can mean an uncertain commit and is never automatically retried. Parent [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27) remains OPEN; scoped live-connection [#45](https://github.com/KeyserDSoze/RystemDatabase/issues/45).
+**Important limitations:** this is a source-only localhost TCP client without production remote authentication, audited mTLS identity lifecycle, pooling, multiplexing, query API, idempotent retry guarantees, shard routing, NuGet package publication or EF Core provider. Invalid/outside-loopback address rejected before connect; network failure on a write can mean an uncertain commit and is never automatically retried. Parent [#27](https://github.com/KeyserDSoze/RystemDatabase/issues/27) remains OPEN; scoped live-connection [#45](https://github.com/KeyserDSoze/RystemDatabase/issues/45).
 
 [Local usage](../../../../docs/LOCAL_CLIENTS.md) | [Typed value format](../../../../docs/RDB_TYPED_PROTOCOL.md)
 
@@ -45,5 +45,40 @@ await using var db = await RystemLoopbackClient.ConnectTlsAsync(
 await db.PingAsync();
 ```
 
-`ConnectTlsAsync` uses `SslStream`, an explicit `X509ChainPolicy.CustomRootTrust`, standard DNS SAN verification (no validation bypass) and requires negotiated **TLS1.3** before sending the bearer HELLO. On macOS .NET 10, enable Network.framework using `DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1` at startup; the SDK also opts in before making its TLS connection. The real Rust server subprocess, negative wrong CA/name/expired/not-yet-valid cert tests and binary CRUD are CI-tested on Linux/macOS/Windows (#52/#53/#54). This is **not** remotely deployable or published to NuGet; no mTLS, certificate revocation workflow, pooling or cluster routing. [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
+`ConnectTlsAsync` uses `SslStream`, an explicit `X509ChainPolicy.CustomRootTrust`, standard DNS SAN verification (no validation bypass) and requires negotiated **TLS1.3** before sending the bearer HELLO. On macOS .NET 10, enable Network.framework using `DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK=1` at startup; the SDK also opts in before making its TLS connection. The real Rust server subprocess, negative wrong CA/name/expired/not-yet-valid cert tests and binary CRUD are CI-tested on Linux/macOS/Windows (#52/#53/#54). This is **not** remotely deployable or published to NuGet; source-only mTLS client certificate transport is now separately available via `ConnectMtlsAsync` (#69), but certificate revocation/rotation, Windows key-container ACL review, pooling and cluster routing remain open. [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md).
 
+## Opt-in real TLS1.3 client-certificate mTLS (#69, loopback source only)
+
+```csharp
+using System.Net;
+using RystemDatabase.Client;
+var token = await File.ReadAllBytesAsync("private/write.token");
+await using var client = await RystemLoopbackClient.ConnectMtlsAsync(
+    IPAddress.Loopback, 8790, "localhost",
+    "private/server-root-ca.pem",
+    "private/client-writer.pem", "private/client-writer.key", token);
+await client.PingAsync();
+```
+
+Unlike `ConnectTlsAsync` (server certificate only), this method presents
+a caller-supplied X.509 client certificate with a matching local private
+PEM key through native `SslStream`. The Rust server must require
+`--mtls-ca`, `--mtls-policy` and an authenticated HELLO token, then
+intersects the strict verified client URI SAN principal ACL with the token
+ACL. Local certificate/key files must be bounded (64 KiB each), regular,
+non-symlink and, for private PEM on Unix, group/other inaccessible.
+Mismatched cert/key is rejected *before connecting*.
+
+On Windows, Schannel cannot use the PEM loader's purely in-memory private
+key. The SDK uses a **temporary OS-managed user key import** via an
+in-memory PKCS#12 roundtrip, zeroes the buffer and disposes the certificate.
+**Windows may still briefly materialize a private key under the OS user
+profile; NTFS ACL/cleanup and production key management are not audited.**
+MacOS .NET 10 needs Network.framework TLS1.3 as noted above. Actual
+Rust-process tests use ephemeral CA-signed writer and reader certificates
+and verify positive typed CRUD and wrong issuer/EKU/identity/token,
+read-only ACL and server CA/SAN on all three OSes.
+
+This remains local experimental source, not a released/production remote
+mTLS SDK. See [LOCAL_TLS.md](../../../../docs/LOCAL_TLS.md) and
+[#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55).

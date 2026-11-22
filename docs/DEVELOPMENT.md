@@ -279,5 +279,30 @@ PEM pairing is rejected **before** opening a socket. No private client
 keys or tokens are committed or placed in command-line arguments.
 CI runs Node against a real Rust CLI on Linux/macOS/Windows.
 [#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) remains
-OPEN for .NET mTLS client support, revocation/rotation, Windows ACL
+OPEN for revocation/rotation, Windows ACL
 audits, remote policy and broader threat-model/security gates.
+
+## .NET 10 real Rust-client mTLS and Schannel compatibility (#69)
+
+```sh
+cargo build --locked -p rystemdb-cli
+dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- target/debug/rystemdb
+```
+
+The `MtlsContract.cs` test creates ephemeral, signed client roots and
+clientAuth URI SAN leaf identities using OpenSSL under a private temporary
+directory. It launches the real loopback `rpc-serve` process in mandatory
+mTLS mode and proves typed CRUD, token and certificate ACL intersection,
+read-only denial, wrong CA, wrong EKU, unknown principal, disjoint token
+grants, wrong server CA/name, and lack of token-only authorization.
+Client PEM material is loaded from local regular files, bounded at 64 KiB;
+Unix private-key PEM permissions must deny group/other and symlinks
+are rejected before connecting. All three CI .NET jobs run this test.
+
+On Windows, Schannel cannot negotiate mTLS with the raw PEM parser's
+*ephemeral* key. The SDK imports a zeroed-after-use in-memory PKCS#12
+through `X509CertificateLoader.LoadPkcs12` with `UserKeySet`, no
+`PersistKeySet`. The platform may transiently store OS-managed user
+key material: **Windows key ACL, cleanup, rotation and revocation remain
+security backlog under #55/#39**, not assured by this integration test.
+See [LOCAL_TLS.md](LOCAL_TLS.md). This is not remotely deployable.

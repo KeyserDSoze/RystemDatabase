@@ -160,7 +160,68 @@ remote certificate provisioning.
 
 `TlsContract.cs` and `tests/tls.test.mjs` launch the **real Rust executable** on Linux, macOS and Windows and verify successful TLS HELLO/PING, nested typed binary CRUD (bytes, references, i64, Unicode), concurrent requests, collection read/write denial, wrong CA/SAN, malformed credential, plaintext-to-TLS refusal and persistence across separate server processes. Additional **public** expiry fixtures ensure both languages reject server certificates whose notBefore/notAfter window excludes the current date, even when CA and SAN match. An RSWP Unauthorized response is explicitly flushed before the Rust server closes its TLS stream (#54).
 
-**These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. Source-only **Rust and Node mTLS certificate presentation** now works over loopback (#61/#68), but there is no .NET mTLS client-certificate transport, centrally managed identities, secure certificate/key rotation, revocation workflow, audited Windows client key ACLs, secure connection pools, released NuGet/npm SDK packages or service discovery. [#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) and [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remain open.
+**These are not production remote TLS SDKs.** The server and all client APIs still reject non-loopback addresses. Source-only **Rust, Node and .NET mTLS certificate presentation** now works over loopback (#61/#68/#69), but there is no centrally managed identity enrollment, secure certificate/key rotation, revocation workflow, audited Windows client-key container ACL/cleanup, secure connection pools, released NuGet/npm SDK packages or service discovery. [#55](https://github.com/KeyserDSoze/RystemDatabase/issues/55) and [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39) remain open.
+
+## Opt-in .NET 10 client certificate mTLS (source only, #69)
+
+The .NET 10 `RystemLoopbackClient.ConnectMtlsAsync` accepts a **separate,
+explicit server root CA PEM path**, client leaf certificate PEM path, client
+private key PEM path, and a 32-byte bearer token. It does not change the
+existing `ConnectTlsAsync` server-auth-only API. The server must be configured
+with independent `--mtls-ca`, `--mtls-policy`, `--tls-cert/--tls-key` and
+`--auth-file`. Both endpoints remain numeric loopback only.
+
+```csharp
+using System.Net;
+using RystemDatabase.Client;
+var token = await File.ReadAllBytesAsync("private/write.token");
+await using var db = await RystemLoopbackClient.ConnectMtlsAsync(
+    IPAddress.Loopback, 8790, "localhost",
+    "private/server-root-ca.pem",
+    "private/client-writer.pem", "private/client-writer.key", token);
+try {
+    await db.PutAsync("orders", "o42", new RdbValue.Object(
+        new Dictionary<string, RdbValue> {
+            ["paid"] = new RdbValue.Boolean(true)
+        }));
+} finally {
+    // IAsyncDisposable closes the authenticated socket.
+}
+```
+
+The SDK rejects nonexistent, empty, oversized (**64 KiB per file**) or
+symlinked client certificate/key files; on Unix, the private-key PEM must
+have **no group/other permissions** (e.g., `chmod 600`). It validates
+that a standard .NET X.509 parser can import the matching client cert/key
+*before opening a socket*. The TLS connection uses native `SslStream`,
+**TLS1.3 only**, explicit custom server CA trust and the platform's DNS SAN
+validation, with no custom validation bypass, remote address, TLS1.2 or
+plaintext fallback. The bearer token is sent only after authenticated
+TLS1.3; the Rust server independently checks the client's CA/validity,
+clientAuth EKU, canonical URI SAN identity and permission intersection.
+
+**Windows Schannel private-key limitation:** Windows' TLS stack cannot
+use the purely ephemeral private key returned by
+`X509Certificate2.CreateFromPemFile` for client authentication. The SDK
+therefore roundtrips the PEM identity through **an in-memory PKCS#12 buffer**
+(zeroed after import) using nonobsolete
+`X509CertificateLoader.LoadPkcs12(..., X509KeyStorageFlags.UserKeySet)`
+and disposes the temporary imported certificate after connection setup.
+No application `.pfx` file is created and no private PEM/key contents
+are sent in arguments or RSWP frames. **Schannel may temporarily write
+an OS-managed key container to the user profile**, so Windows NTFS key ACL,
+secure cleanup and concurrent lifecycle guarantees remain **unaudited**
+under #55/#39. This is not a zero-disk-secret or production PKI guarantee.
+Microsoft documents the platform restriction in
+[.NET SslStream troubleshooting](https://learn.microsoft.com/en-us/dotnet/core/extensions/sslstream-troubleshooting).
+
+The real-process `MtlsContract.cs` test creates short-lived, CA-signed
+writer/reader/untrusted/invalid-EKU X.509 identities via OpenSSL in a
+temporary test directory; it launches the actual Rust mTLS server and
+checks typed PUT/GET/DELETE, read-only principal denial, wrong issuer,
+server CA/SAN, invalid token and input files on Linux/macOS/Windows.
+It never commits test private keys. The tests are an interoperability
+gate, **not** a production trust/audit review.
 
 ## mTLS principal policy and verified URI SAN authorization (#57/#58/#61/#62)
 

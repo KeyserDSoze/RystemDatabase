@@ -58,7 +58,8 @@ GitHub Issues are the source of truth, not static checkboxes alone. [Browse open
 - [x] Strict bounded DER structural guard for verified leaf URI SAN identity and malformed/duplicate GeneralName rejection (#62)
 - [x] Real ephemeral CA-signed duplicate X.509 SAN extension integration regression: independently verified signature/two extension OIDs, test-only client transmits invalid cert to actual localhost Rust server, HELLO denied (#63)
 - [x] Node.js source-only TLS1.3 client certificate/key presentation with real Rust mTLS principal ACL intersection and negative cross-OS tests (#68)
-- [ ] Complete mTLS interoperability in .NET, certificate/key lifecycle and PKI hardening (#55); production remote policies remain #39
+- [x] .NET 10 source-only TLS1.3 client X509 certificate/key presentation with real Rust mTLS principal/token intersection, cross-OS negative tests (#69)
+- [ ] Client-key lifecycle/PKI hardening, Windows Schannel temporary-key ACL/cleanup, certificate rotation and revocation (#55); production remote policies remain #39
 - [ ] Production TLS/mTLS, external identity, token expiry/rotation/revocation, Windows ACL audit, per-user quotas and rate limiting (#39)
 - [ ] Full version-negotiated v1 body compatibility, fuzz/property coverage, cancellation/idempotency policy and multi-OS client SDK release tests (#43/#38)
 - [x] Experimental loopback-only RSWP native TCP binary CRUD server with bounded workers and TDD subprocess tests (#37)
