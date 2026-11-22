@@ -130,3 +130,15 @@ authorized on this listener, even if TLS verifies a certificate.** Identity
 extraction from the verified URI SAN and intersection with the token ACL remain
 #56. This is not a usable mTLS client/server, and must not be exposed remotely.
 The previous TLS-only Rust/.NET/Node modes remain active and unchanged.
+
+## Rust SDK client certificate transport test (#60)
+
+```sh
+cargo test --locked -p rystemdb-cli --test rpc_mtls_sdk
+```
+
+The test runner needs `openssl` in `PATH` for ephemeral private client
+certificate and CA generation; no client identity private key is committed.
+It verifies a real mutual TLS1.3 handshake with a test-only Rustls verifier
+and confirms the current real CLI still denies RSWP in mTLS gate mode.
+`connect_mtls` is not usable CRUD until principal binding under #59.

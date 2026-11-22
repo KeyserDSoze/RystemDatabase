@@ -6,12 +6,13 @@ use rystemdb_protocol::{read_frame, write_frame, Frame, Operation};
 use std::fs;
 use std::io::Write;
 use std::net::TcpListener;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 const TOKEN: [u8; 32] = [0x11; 32];
@@ -93,8 +94,22 @@ fn tdd_rust_sdk_sends_real_client_certificate_over_verified_tls13() {
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    // An SDK regression that never connects must not hang the CI worker.
+    listener.set_nonblocking(true).unwrap();
     let server_thread = thread::spawn(move || {
-        let (tcp, _) = listener.accept().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(6);
+        let (tcp, _) = loop {
+            match listener.accept() {
+                Ok(value) => break value,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock
+                    && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("test mTLS listener never accepted a connection: {err}"),
+            }
+        };
+        tcp.set_nonblocking(false).unwrap();
         tcp.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
         tcp.set_write_timeout(Some(Duration::from_secs(4))).unwrap();
         let conn = rustls::ServerConnection::new(Arc::new(server_config)).unwrap();
@@ -119,6 +134,42 @@ fn tdd_rust_sdk_sends_real_client_certificate_over_verified_tls13() {
         .expect("client must present a verified client cert to a real TLS1.3 server");
     client.ping().unwrap();
     server_thread.join().unwrap();
+}
+
+#[test]
+fn tdd_rust_sdk_presenting_a_valid_certificate_does_not_bypass_denied_real_cli() {
+    let f = Temp::new();
+    test_identity(&f);
+    fs::copy(fixture_path("server-cert.pem"), f.path("server-cert.pem")).unwrap();
+    fs::copy(fixture_path("server-key.pem"), f.path("server-key.pem")).unwrap();
+    fs::write(f.path("auth-policy"), format!("{} orders rw\\n", "11".repeat(32))).unwrap();
+    fs::write(f.path("principal-policy"),
+        "rystem-mtls-principal-acl-v1\\nspiffe://rystemdb.local/client/writer orders rw\\n").unwrap();
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        for file in ["server-key.pem", "auth-policy", "principal-policy"] {
+            fs::set_permissions(f.path(file), fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+    let mut child: Child = Command::new(env!("CARGO_BIN_EXE_rystemdb"))
+        .args(["rpc-serve","--data"]).arg(f.path("store"))
+        .args(["--listen","127.0.0.1:0","--auth-file"]).arg(f.path("auth-policy"))
+        .arg("--tls-cert").arg(f.path("server-cert.pem"))
+        .arg("--tls-key").arg(f.path("server-key.pem"))
+        .arg("--mtls-policy").arg(f.path("principal-policy"))
+        .arg("--mtls-ca").arg(f.path("ca.pem"))
+        .stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().unwrap();
+    let mut line=String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    assert!(line.contains("LOOPBACK RPC listening on"),
+        "mTLS CLI with ephemeral test CA should start");
+    let addr = line.split_whitespace().last().unwrap().parse().unwrap();
+    let result = LocalClient::connect_mtls(addr,"localhost",
+        &fixture_path("root-ca.pem"),&f.path("client.pem"),&f.path("client.key"),&TOKEN);
+    assert!(result.is_err(), "verified client cert/token bypassed #58 deny-all gate");
+    let _=child.kill();
+    let _=child.wait();
 }
 
 #[test]
@@ -147,6 +198,14 @@ fn tdd_rust_sdk_rejects_remote_destination_and_bad_private_key_before_network() 
         &ca,&f.path("missing.cert"),&key,&TOKEN),Err(ClientError::TlsConfig)));
     assert!(matches!(LocalClient::connect_mtls(local,"localhost",
         &f.path("missing.ca"),&cert,&key,&TOKEN),Err(ClientError::TlsConfig)));
+    let malformed_cert = f.path("malformed-cert.pem");
+    fs::write(&malformed_cert, b"not an X.509 certificate").unwrap();
+    assert!(matches!(LocalClient::connect_mtls(local,"localhost",
+        &ca,&malformed_cert,&key,&TOKEN),Err(ClientError::TlsConfig)));
+    let oversized_cert = f.path("oversized-cert.pem");
+    fs::write(&oversized_cert,vec![b'x';65*1024]).unwrap();
+    assert!(matches!(LocalClient::connect_mtls(local,"localhost",
+        &ca,&oversized_cert,&key,&TOKEN),Err(ClientError::TlsConfig)));
     // Even a valid unrelated private key must not be paired with this leaf.
     let mismatched = fixture_path("server-key.pem");
     assert!(matches!(LocalClient::connect_mtls(local,"localhost",
@@ -161,6 +220,10 @@ fn tdd_rust_sdk_rejects_remote_destination_and_bad_private_key_before_network() 
         symlink(&key,&link).unwrap();
         assert!(matches!(LocalClient::connect_mtls(local,"localhost",
             &ca,&cert,&link,&TOKEN),Err(ClientError::TlsConfig)));
+        let cert_link = f.path("symlink.cert");
+        symlink(&cert,&cert_link).unwrap();
+        assert!(matches!(LocalClient::connect_mtls(local,"localhost",
+            &ca,&cert_link,&key,&TOKEN),Err(ClientError::TlsConfig)));
         let ca_link = f.path("symlink.ca");
         symlink(&ca,&ca_link).unwrap();
         assert!(matches!(LocalClient::connect_mtls(local,"localhost",

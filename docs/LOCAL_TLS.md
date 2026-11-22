@@ -186,3 +186,20 @@ identity extraction and applying the grant intersection are still work under
 #56. No token bypass, no name/CN-based authorization and no plaintext fallback
 exist in this mode. Legacy authenticated TLS localhost mode WITHOUT mTLS
 flags is unchanged. Do not use this gate as an operational database server.
+
+### Rust SDK client certificate presentation (#60)
+
+The Rust SDK offers `LocalClient::connect_mtls` with an explicit server CA
+file, client certificate and private-key paths plus 32-byte token. It validates
+TLS1.3 server identity and securely loads bounded PEM files; private key
+permissions are checked on Unix. A real Rustls test peer verifies an ephemeral
+client certificate signed by a separately generated test CA, then exchanges
+RSWP HELLO/PING. No long-term or production private client keys are in git.
+
+**This method does NOT authorize RPC traffic against the current real CLI
+mTLS gate.** Even a correctly verified client certificate is disconnected
+before RSWP HELLO by the server until #59 implements URI SAN principal
+extraction and `cert-grants ∩ bearer-token-grants`. Legacy `connect_tls`
+remains functional; no remote addresses or automatic fallback are allowed.
+`cargo test --locked -p rystemdb-cli --test rpc_mtls_sdk` exercises both
+positive Rustls transport and the real CLI deny-all requirement.
