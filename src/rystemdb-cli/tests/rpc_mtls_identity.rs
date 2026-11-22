@@ -76,6 +76,21 @@ impl Fixture {
             Some("URI:spiffe://rystemdb.local/client/writer%2Fadmin"), "clientAuth");
         f.create_dated_identity("expired", "20100101000000Z", "20110101000000Z");
         f.create_dated_identity("future", "20350101000000Z", "20360101000000Z");
+        const URI: &[u8] = b"spiffe://rystemdb.local/client/writer";
+        f.create_raw_san_identity("raw-invalid-utf8", &Self::raw_names(&[
+            Self::uri(URI), Self::uri(&[0xff])
+        ]));
+        f.create_raw_san_identity("raw-double", &Self::raw_names(&[
+            Self::uri(URI), Self::uri(URI)
+        ]));
+        f.create_raw_san_identity("raw-uri-and-dns", &Self::raw_names(&[
+            Self::uri(URI), {
+                let mut dns=vec![0x82, 9];dns.extend_from_slice(b"localhost");dns
+            }
+        ]));
+        f.create_raw_san_identity("raw-missing-uri", &Self::raw_names(&[
+            { let mut dns=vec![0x82, 9]; dns.extend_from_slice(b"localhost");dns }
+        ]));
         f
     }
     fn path(&self, file: &str) -> PathBuf { self.root.join(file) }
@@ -109,6 +124,40 @@ impl Fixture {
             "-CAcreateserial","-out",text_path(&cert),"-days","2",
             "-extfile",text_path(&config),"-extensions","identity"]);
         private(&key);
+    }
+    fn create_raw_san_identity(&self, name: &str, raw_general_names: &[u8]) {
+        // Real X.509 signed by the throwaway test CA. OpenSSL supports
+        // `2.5.29.17=DER:...` to encode adversarial SAN extension contents
+        // without checking any private identity key into the repository.
+        let key=self.path(&format!("{name}.key"));
+        let csr=self.path(&format!("{name}.csr"));
+        let cert=self.path(&format!("{name}.pem"));
+        let ext=self.path(&format!("{name}-raw.cnf"));
+        let hex=raw_general_names.iter().map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>().join(":");
+        fs::write(&ext, format!(
+            "[identity]\\nbasicConstraints=critical,CA:FALSE\\nkeyUsage=critical,digitalSignature\\nextendedKeyUsage=clientAuth\\n2.5.29.17=DER:{hex}\\n"
+        ).replace("\\\\n", "\\n")).unwrap();
+        openssl(&["req","-new","-newkey","rsa:2048","-nodes",
+            "-keyout",text_path(&key),"-out",text_path(&csr),
+            "-subj","/CN=spiffe://rystemdb.local/client/writer"]);
+        let ca=self.path("client-ca.pem");let ca_key=self.path("client-ca.key");
+        openssl(&["x509","-req","-in",text_path(&csr),
+            "-CA",text_path(&ca),"-CAkey",text_path(&ca_key),
+            "-CAcreateserial","-out",text_path(&cert),"-days","2",
+            "-extfile",text_path(&ext),"-extensions","identity"]);
+        private(&key);
+    }
+    fn raw_names(names: &[Vec<u8>]) -> Vec<u8> {
+        let combined=names.concat();
+        assert!(combined.len()<128);
+        let mut out=vec![0x30, combined.len() as u8];
+        out.extend(combined);
+        out
+    }
+    fn uri(bytes: &[u8]) -> Vec<u8> {
+        assert!(bytes.len()<128);
+        let mut out=vec![0x86, bytes.len() as u8];out.extend(bytes);out
     }
     fn create_dated_identity(&self, name: &str, start: &str, end: &str) {
         // OpenSSL "ca" supports fixed validity intervals for real negative
@@ -198,6 +247,8 @@ fn tdd_mtls_verified_identity_rejects_wrong_ca_eku_missing_multiple_ambiguous_sa
         "untrusted-writer", "wrongeku", "expired", "future",
         "nosan", "multisan", "badcase", "stranger",
         "query", "wrongprefix", "percent",
+        "raw-invalid-utf8", "raw-double", "raw-uri-and-dns",
+        "raw-missing-uri",
     ] {
         assert!(f.connect(server.addr, identity, &RW).is_err(),
             "untrusted or ambiguous client identity accepted: {identity}");

@@ -1,6 +1,7 @@
 //! Native Rystem Database CLI: HTTP health, local document CRUD and loopback RSWP RPC.
 mod auth;
 mod json_codec;
+mod mtls_san;
 mod rpc;
 mod tls;
 
