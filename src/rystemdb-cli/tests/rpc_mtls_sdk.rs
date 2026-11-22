@@ -142,9 +142,9 @@ fn tdd_rust_sdk_presenting_a_valid_certificate_does_not_bypass_denied_real_cli()
     test_identity(&f);
     fs::copy(fixture_path("server-cert.pem"), f.path("server-cert.pem")).unwrap();
     fs::copy(fixture_path("server-key.pem"), f.path("server-key.pem")).unwrap();
-    fs::write(f.path("auth-policy"), format!("{} orders rw\\n", "11".repeat(32))).unwrap();
+    fs::write(f.path("auth-policy"), format!("{} orders rw\n", "11".repeat(32))).unwrap();
     fs::write(f.path("principal-policy"),
-        "rystem-mtls-principal-acl-v1\\nspiffe://rystemdb.local/client/writer orders rw\\n").unwrap();
+        "rystem-mtls-principal-acl-v1\nspiffe://rystemdb.local/client/writer orders rw\n").unwrap();
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
         for file in ["server-key.pem", "auth-policy", "principal-policy"] {
