@@ -111,12 +111,100 @@ of documents. No better-than-competitor conclusion is justified.
 The Linux Rust CI job runs the **release** example with fixed small
 inputs (`64/128/128/42`) and validates its NDJSON using the
 dependency-free Python checker (six self-tests, including five negative schema cases).
-The raw `storage-benchmark.ndjson` file is uploaded as a short-retention
+The original Rystem report plus the exported RDB fixture and SQLite WAL/FULL report are uploaded together as a short-retention
 `storage-benchmark-<commit SHA>` GitHub Actions artifact. These are
 per-commit, shared-runner diagnostic results; they are NOT controlled
 repeatable performance baselines. **Only correctness, schema,
 nonempty samples and bounded input are CI pass/fail conditions. There is
 no absolute millisecond gate** to produce spurious red CI on noisy hosts.
+
+## First real SQLite WAL/FULL exploratory baseline (#92, child of #89)
+
+**This is deliberately not a speed ranking.** The benchmark now exports
+the **exact same binary RDB v1 frames and randomized key/operation order**
+used by Rystem's release-mode `bench_storage` example. A standard-library
+Python `sqlite3` adapter loads those bytes as **opaque SQLite BLOBs**
+and times actual embedded, disk-backed CRUD with
+`PRAGMA journal_mode=WAL`, `PRAGMA synchronous=FULL`,
+explicit `BEGIN IMMEDIATE` + `COMMIT` **per individual write**,
+and **one transaction for each two-key batch**. The adapter verifies
+that both PRAGMAs took effect, that reads and writes return **exactly**
+the exported RDB bytes, and that the final data survives closing and
+reopening SQLite. It reports the actual SQLite library and Python
+runtime versions, not assumed versions.
+
+```sh
+python3 scripts/test_sqlite_benchmark.py
+cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
+  --records 64 --operations 128 --payload-bytes 128 --seed 42 \
+  --json-output storage-benchmark.ndjson \
+  --fixture-output storage-fixture.ndjson
+python3 scripts/check_storage_benchmark.py storage-benchmark.ndjson
+python3 scripts/benchmark_sqlite.py \
+  --fixture storage-fixture.ndjson \
+  --rystem-report storage-benchmark.ndjson \
+  --output sqlite-benchmark.ndjson
+```
+
+Fixture rows are **bounded**, versioned NDJSON: metadata, all initial
+document ID + fully encoded RDB hex values, each exact seeded read-ID,
+each update ID + full replacement RDB hex, then two keys and typed
+values for each batched atomic write. An independent validator rejects
+unexpected/missing fields, duplicate/out-of-order document IDs,
+malformed hex/magic/types, nonmatching read/update key orders,
+overlimit files, records/operations/payload sizes and incorrect
+metadata across the two engines. Exporting is outside Rystem's timed
+operations and does **not** alter its RYSF storage format or hot paths.
+Fixture export deliberately caps inputs to 256 initial records,
+512 operations and 1,024 payload bytes so the generated hex corpus
+cannot silently become huge.
+
+The SQLite workload uses a `TEXT PRIMARY KEY` table with non-null
+`BLOB` payloads, cached prepared statements, one writer process
+and a fresh temporary on-disk database. Its measured operations are:
+
+| SQLite metric | Meaning and alignment limits |
+| --- | --- |
+| `put_sync` | Insert the **same RDB frame bytes** as Rystem, one WAL/FULL commit per key |
+| `get_hit_raw_blob_warm` | Query the same prewarmed seeded existing IDs, retrieve opaque RDB BLOB (**no CRC or typed RDB decode**) |
+| `get_miss` | Index miss by identical absent-key pattern |
+| `update_sync` | Replace the same keyed RDB frame bytes, one WAL/FULL commit per update |
+| `batch_2_sync` | Insert the same two RDB-valued keys in **one SQLite transaction** |
+| `delete_sync` | Delete original keys one by one, each with WAL/FULL commit |
+| `reopen_replay` | Open SQLite after close; **one sample** with validation, not a directly equivalent RYSF replay |
+ 
+The report includes nanosecond samples and rounded millisecond
+p50/p95/p99/max, wall-loop throughput, database+WAL+SHM disk bytes
+while active, sqlite3 runtime version, Python version, and explicit
+`payload_semantics=opaque_rdb_blob_no_typed_crc_decode`. The
+**SQLite `get_hit_raw_blob_warm` is not directly comparable to
+Rystem `get_hit_typed_crc_warm`**: Rystem CRC-checks its RYSF frame
+and decodes typed RDB values; SQLite/Python fetches opaque bytes and
+compares them for equality outside the timed sample. The runtimes
+(Rust vs Python), storage layouts, journal and indexes, caching,
+transaction implementation, write verification/throughput accounting
+and reopen behavior also differ. The new results can identify a
+performance region to investigate, **not** establish a fair
+winner/speedup percentage.
+
+GitHub's **single shared Linux CI runner** runs both engines in
+sequence and uploads `storage-benchmark.ndjson`,
+`storage-fixture.ndjson` and `sqlite-benchmark.ndjson`
+in the existing per-commit artifact. The independent Python unittest
+suite and fixture/report format tests are correctness gates; **no
+millisecond limit or ungrounded superiority assertion is in CI**.
+Raw numbers are subject to runner contention and cache drift. The
+official SQLite documentation confirms that WAL with `synchronous=FULL`
+synchronizes the WAL at every commit; see
+[SQLite PRAGMA synchronous](https://sqlite.org/pragma.html) and
+[SQLite WAL](https://sqlite.org/wal.html).
+
+**Fair comparison remains open under #89:** replace Python-vs-Rust
+runtime differences with native equivalent adapters, compare actual
+RDB typed decode and checksum policy, use dedicated identical host
+hardware, warm and cold cache controls, at least five independent
+runs, 1K/100K/1M data tiers, concurrency, RSS/CPU and latency tails.
+RocksDB, PostgreSQL and DuckDB are not measured by this child.
 
 ## Competing systems and necessary workload parity (#89)
 
@@ -125,8 +213,8 @@ Competitors cover different tasks, and **must not** be mixed into one
 
 | Scenario | Rystem path | Relevant competitors / tools | State |
 | --- | --- | --- | --- |
-| Embedded single-key PUT/GET/DELETE | Rust `DocumentStore` | SQLite WAL/FULL; RocksDB `db_bench` with synchronous writes | **Rystem measured; fair competitor runs pending** |
-| Embedded 2-key durable atomic write | Rust BATCH3 commit | SQLite one explicit 2-row transaction; RocksDB `WriteBatch` with sync | **Rystem measured; parity not yet verified** |
+| Embedded single-key PUT/GET/DELETE | Rust `DocumentStore` | SQLite WAL/FULL; RocksDB `db_bench` with synchronous writes | **Rystem + SQLite opaque-RDB Python baseline measured; fair native comparison pending** |
+| Embedded 2-key durable atomic write | Rust BATCH3 commit | SQLite one explicit 2-row transaction; RocksDB `WriteBatch` with sync | **Rystem + SQLite WAL/FULL measured; transaction overhead differs** |
 | Client/server document CRUD | Future comparable Rystem RSWP RPC load | PostgreSQL JSONB; MongoDB document protocol with equivalent networking | **not yet benchmarked together** |
 | Key-value mixes / hot keys / scans | Future uniform workloads | YCSB A–F with identical distribution and record counts | **not yet benchmarked together** |
 | SQL aggregations and analytical scans | Future SQL/DataFusion/Parquet path | PostgreSQL, DuckDB (their analytical benchmark suites) | **Rystem SQL path not implemented: N/A** |

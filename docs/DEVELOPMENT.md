@@ -18,6 +18,38 @@ docker build -f docker/Dockerfile -t rystemdb:local .
 
 Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors.
 
+## SQLite WAL/FULL baseline over exact Rust-generated typed RDB corpus (#92)
+
+```sh
+python3 scripts/test_sqlite_benchmark.py
+cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
+  --records 64 --operations 128 --payload-bytes 128 --seed 42 \
+  --json-output storage-benchmark.ndjson \
+  --fixture-output storage-fixture.ndjson
+python3 scripts/benchmark_sqlite.py \
+  --fixture storage-fixture.ndjson \
+  --rystem-report storage-benchmark.ndjson \
+  --output sqlite-benchmark.ndjson
+```
+
+The #92 Python unittest gate is RED until the SQLite adapter exists,
+then GREEN on actual disk-backed SQLite WAL+FULL with explicit
+acknowledged transactions and true reopen persistence. The new Rust
+fixture export is bounded (<=256 records, <=512 operations, <=1 KiB
+binary field), produces **exact byte-identical typed RDB frame inputs**
+and reproduces the same seeded read/update and two-key batch schedule
+used by Rystem. Each SQLite read checks the exact RDB BLOB bytes and
+each write commits a real transaction with `synchronous=FULL` and
+`journal_mode=WAL`. Linux CI archives the Rust, fixture and SQLite
+NDJSON reports together; correctness/format only, never shared-host
+millisecond thresholds.
+
+SQLite Python BLOB reads are **not semantic equivalents** of Rust
+CRC-verified and typed-decoded RDB reads. Same runner/fixture does not
+eliminate language, driver, cache, transaction or database engine
+differences. A fair native same-language, same-decode competitor
+matrix remains OPEN under #89/#12. See [PERFORMANCE.md](PERFORMANCE.md).
+
 ## CRC-safe grouped GET regression and paired latency workload (#91)
 
 ```sh
