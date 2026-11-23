@@ -117,7 +117,7 @@ impl PreAuthTransport for DeadlineSocket {
     }
 }
 
-impl PreAuthTransport for rustls::StreamOwned<DeadlineSocket> {
+impl PreAuthTransport for rustls::StreamOwned<rustls::ServerConnection, DeadlineSocket> {
     fn finish_pre_auth(&mut self) -> io::Result<()> {
         self.sock.finish_pre_auth()
     }
