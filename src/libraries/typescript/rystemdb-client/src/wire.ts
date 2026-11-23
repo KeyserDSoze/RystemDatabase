@@ -19,6 +19,15 @@ export interface Frame {
   readonly payload: Uint8Array;
 }
 
+/** Strict 24-byte RSWP envelope validation without touching its body. */
+export interface FrameHeader {
+  readonly kind: Kind;
+  readonly operation: Operation;
+  readonly requestId: bigint;
+  readonly status: number;
+  readonly payloadLength: number;
+}
+
 const allowedOperations = new Set<number>([1,2,16,17,18]);
 function validateKindAndStatus(kind: number, status: number): void {
   if (kind !== 1 && kind !== 2) throw new Error("invalid frame kind");
@@ -48,7 +57,9 @@ export function encode(frame: Frame): Uint8Array {
   return bytes;
 }
 
-export function decode(input: Uint8Array): Frame {
+// #74: inspect the *entire* untrusted header before reserving any body
+// buffer. decode() uses this same routine to prevent validation drift.
+export function decodeHeader(input: Uint8Array): FrameHeader {
   if (input.length < HEADER_LEN) throw new Error("incomplete frame header");
   const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
   if (input[0] !== 0x52 || input[1] !== 0x53 || input[2] !== 0x57 || input[3] !== 0x50) {
@@ -61,16 +72,27 @@ export function decode(input: Uint8Array): Frame {
   validateKindAndStatus(kind, status);
   if (!allowedOperations.has(operation)) throw new Error("invalid operation");
   if (view.getUint16(10, false) !== HEADER_LEN) throw new Error("invalid header length");
-  const length = view.getUint32(20, false);
-  if (length > MAX_PAYLOAD_BYTES) throw new Error("frame too large");
-  const expected = HEADER_LEN + length;
-  if (input.length < expected) throw new Error("incomplete frame payload");
-  if (input.length > expected) throw new Error("trailing bytes after frame");
+  const payloadLength = view.getUint32(20, false);
+  if (payloadLength > MAX_PAYLOAD_BYTES) throw new Error("frame too large");
   return {
     kind: kind as Kind,
     operation: operation as Operation,
     status,
     requestId: view.getBigUint64(12, false),
+    payloadLength,
+  };
+}
+
+export function decode(input: Uint8Array): Frame {
+  const header = decodeHeader(input);
+  const expected = HEADER_LEN + header.payloadLength;
+  if (input.length < expected) throw new Error("incomplete frame payload");
+  if (input.length > expected) throw new Error("trailing bytes after frame");
+  return {
+    kind: header.kind,
+    operation: header.operation,
+    status: header.status,
+    requestId: header.requestId,
     // Buffer.slice() produces a Buffer subclass when a Node socket supplied
     // the input. Canonicalize to the public Uint8Array SDK type.
     payload: Uint8Array.from(input.subarray(HEADER_LEN)),

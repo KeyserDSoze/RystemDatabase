@@ -7,7 +7,7 @@
  */
 import { Socket } from "node:net";
 import { connect as connectTlsSocket, type TLSSocket } from "node:tls";
-import { encode, decode, HEADER_LEN, MAX_PAYLOAD_BYTES, type Frame,
+import { encode, decode, decodeHeader, HEADER_LEN, MAX_PAYLOAD_BYTES, type Frame,
   type Operation } from "./wire.ts";
 import { encodeCrudKey } from "./crud.ts";
 import { encodeRdb, decodeRdb, type RdbValue } from "./rdb.ts";
@@ -35,7 +35,12 @@ interface PendingCall {
 export class RystemLocalClient {
   private readonly socket: Socket;
   private readonly pending = new Map<bigint, PendingCall>();
-  private receiveBuffer = Buffer.alloc(0);
+  // #74: one fixed 24-byte header and one bounded, validated in-flight
+  // frame; never re-concatenate a growing body on every TCP/TLS fragment.
+  private readonly receiveHeader = Buffer.alloc(HEADER_LEN);
+  private receivedHeaderBytes = 0;
+  private receiveFrame: Buffer | null = null;
+  private receivedFrameBytes = 0;
   private nextId = 1n;
   private closed = false;
 
@@ -267,25 +272,52 @@ export class RystemLocalClient {
 
   private onData(chunk: Buffer): void {
     try {
-      const total = this.receiveBuffer.length + chunk.length;
-      if (total > MAX_PAYLOAD_BYTES + HEADER_LEN) {
-        throw new Error("Buffered Rystem RPC body too large");
-      }
-      this.receiveBuffer = Buffer.concat([this.receiveBuffer, chunk], total);
-      while (this.receiveBuffer.length >= HEADER_LEN) {
-        const length = this.receiveBuffer.readUInt32BE(20);
-        if (length > MAX_PAYLOAD_BYTES) throw new Error("Rystem RPC payload too large");
-        const required = HEADER_LEN + length;
-        if (this.receiveBuffer.length < required) break;
-        const response = decode(this.receiveBuffer.subarray(0, required));
-        this.receiveBuffer = this.receiveBuffer.subarray(required);
-        const waiter = this.pending.get(response.requestId);
-        if (!waiter || response.kind !== 2 || response.operation !== waiter.operation) {
-          throw new Error("Unexpected or mismatched RSWP response correlation");
+      let offset = 0;
+      while (offset < chunk.length) {
+        if (this.receiveFrame === null) {
+          // Header can be split across arbitrary TCP/TLS chunks. Copy each
+          // header byte once, then reject malformed/unexpected peers BEFORE
+          // allocating the body buffer, even for claimed 16 MiB responses.
+          const count = Math.min(HEADER_LEN - this.receivedHeaderBytes, chunk.length - offset);
+          chunk.copy(this.receiveHeader, this.receivedHeaderBytes, offset, offset + count);
+          this.receivedHeaderBytes += count;
+          offset += count;
+          if (this.receivedHeaderBytes < HEADER_LEN) break;
+          const header = decodeHeader(this.receiveHeader);
+          const waiter = this.pending.get(header.requestId);
+          if (!waiter || header.kind !== 2 || header.operation !== waiter.operation) {
+            throw new Error("Unexpected or mismatched RSWP response correlation");
+          }
+          const frame = Buffer.allocUnsafe(HEADER_LEN + header.payloadLength);
+          this.receiveHeader.copy(frame, 0);
+          this.receiveFrame = frame;
+          this.receivedFrameBytes = HEADER_LEN;
+          this.receivedHeaderBytes = 0;
         }
-        this.pending.delete(response.requestId);
-        clearTimeout(waiter.timer);
-        waiter.resolve(response);
+
+        const frame = this.receiveFrame;
+        if (frame === null) throw new Error("Missing RSWP frame");
+        // Each body byte is copied at most once into the pre-sized frame.
+        const count = Math.min(frame.length - this.receivedFrameBytes, chunk.length - offset);
+        if (count > 0) {
+          chunk.copy(frame, this.receivedFrameBytes, offset, offset + count);
+          this.receivedFrameBytes += count;
+          offset += count;
+        }
+        if (this.receivedFrameBytes === frame.length) {
+          const response = decode(frame);
+          // Release the buffer before calling user-facing promise callbacks.
+          // Any trailing bytes in this same chunk are a new independent frame.
+          this.receiveFrame = null;
+          this.receivedFrameBytes = 0;
+          const waiter = this.pending.get(response.requestId);
+          if (!waiter || response.kind !== 2 || response.operation !== waiter.operation) {
+            throw new Error("Unexpected or mismatched RSWP response correlation");
+          }
+          this.pending.delete(response.requestId);
+          clearTimeout(waiter.timer);
+          waiter.resolve(response);
+        }
       }
     } catch (error) {
       this.socket.destroy(error instanceof Error ? error : new Error(String(error)));
@@ -295,7 +327,9 @@ export class RystemLocalClient {
   private failAll(error: Error): void {
     if (this.closed && this.pending.size === 0) return;
     this.closed = true;
-    this.receiveBuffer = Buffer.alloc(0);
+    this.receivedHeaderBytes = 0;
+    this.receivedFrameBytes = 0;
+    this.receiveFrame = null;
     for (const waiter of this.pending.values()) {
       clearTimeout(waiter.timer);
       waiter.reject(error);
