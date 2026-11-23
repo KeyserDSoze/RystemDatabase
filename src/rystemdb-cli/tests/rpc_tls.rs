@@ -198,3 +198,40 @@ fn tdd_tls_key_file_requires_private_unlinked_permissions_on_unix() {
         assert!(!data.exists());
     }
 }
+
+
+/// #73: a partial TLS record header must not keep a worker alive beyond
+/// one absolute accept-to-HELLO deadline merely because bytes trickle in.
+#[test]
+fn tdd_tls_handshake_trickle_does_not_reset_absolute_pre_auth_deadline() {
+    use std::io::Read;
+
+    let f = Fixture::new();
+    let server = f.start();
+    let mut socket = TcpStream::connect(server.address).unwrap();
+    socket.set_read_timeout(Some(Duration::from_millis(800))).unwrap();
+    socket.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+    // Partial TLS handshake record header (content-type, version prefix),
+    // without enough bytes to parse a full TLS record.
+    socket.write_all(&[0x16]).unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+    socket.write_all(&[0x03]).unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+
+    let mut first = [0u8; 1];
+    match socket.read(&mut first) {
+        Ok(0) => {}
+        Err(err) if matches!(err.kind(),
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted) => {}
+        Ok(n) => panic!("partial TLS handshake returned {n} unexpected bytes"),
+        Err(err) => panic!(
+            "trickled TLS handshake occupied server beyond absolute 3s deadline: {err:?}"
+        ),
+    }
+
+    // The TLS listener must still accept fully authenticated, verified clients.
+    let mut client = LocalClient::connect_tls(
+        server.address, "localhost", &f.ca, &READ_WRITE_TOKEN
+    ).expect("legitimate TLS client must connect after a trickle attack");
+    client.ping().unwrap();
+}
