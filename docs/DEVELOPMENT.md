@@ -18,6 +18,33 @@ docker build -f docker/Dockerfile -t rystemdb:local .
 
 Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors.
 
+## CRC-safe grouped GET regression and paired latency workload (#91)
+
+```sh
+cargo test -p rystemdb-storage --locked --test grouped_get
+cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
+  --records 128 --operations 256 --payload-bytes 128 --seed 42
+```
+
+`DocumentStore::get_many(&ids)` and historical
+`DocumentSnapshot::get_many(&ids)` return the input-order list of
+typed values, including duplicate IDs, absent IDs and explicit RDB
+Null. Each call validates <=1,024 IDs **before any I/O** then
+groups requested physical locations by segment and frame, opening
+each segment once and verifying/decoding each full BATCH3 CRC
+frame once. No persistent descriptor cache; missing/unlinked files,
+damaged checksum, different frames, historical snapshots and
+rollovers are tested. There is no disk format change.
+
+The opt-in release benchmark now records two extra metric rows
+(`get_two_batch_members_sequential_warm`,
+`get_two_batch_members_grouped_warm`) for **the same** seeded
+two-member BATCH3 reads. This is a paired embedded-engine sample
+under identical data/durability but sequential measurement order;
+not a proof of world-leading throughput. Controlled 5+ repeated
+host-level profiling remains open in #90. See
+[performance methodology](PERFORMANCE.md).
+
 ## Reproducible performance telemetry (#88, child of #12)
 
 ```sh

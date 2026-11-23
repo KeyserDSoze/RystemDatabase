@@ -200,6 +200,42 @@ fn run() -> Result<()> {
         }
     }
 
+    // #91 apples-to-apples embedded comparison: the SAME random sequence
+    // of two keys that share one BATCH3 frame, once with two individual
+    // fully verified point reads and once with a grouped frame read.
+    // Warm both physical BATCH3 members first; this does not guarantee
+    // stable shared-runner performance or remove ordering effects.
+    let batch_order = seeded_indexes(
+        cfg.seed ^ 0x91ab_cafe, cfg.operations, cfg.operations,
+    );
+    for (index, (first, second)) in batch_keys.iter().enumerate() {
+        if db.get_many(&[first, second])? != vec![
+            Some(Value::Integer(index as i64)), Some(Value::Null),
+        ] {
+            return Err(io::Error::other("batch read warmup mismatch").into());
+        }
+    }
+    metrics.push(measure("get_two_batch_members_sequential_warm", cfg.operations,
+        |i| {
+            let (first, second) = &batch_keys[batch_order[i]];
+            Ok(vec![db.get(first)?, db.get(second)?])
+        },
+        |i, values| {
+            let expected = batch_order[i] as i64;
+            values.as_slice() == [Some(Value::Integer(expected)), Some(Value::Null)]
+        },
+    )?);
+    metrics.push(measure("get_two_batch_members_grouped_warm", cfg.operations,
+        |i| {
+            let (first, second) = &batch_keys[batch_order[i]];
+            db.get_many(&[first, second])
+        },
+        |i, values| {
+            let expected = batch_order[i] as i64;
+            values.as_slice() == [Some(Value::Integer(expected)), Some(Value::Null)]
+        },
+    )?);
+
     metrics.push(measure("delete_sync", cfg.records,
         |i| db.delete(&keys[i]),
         |_, success| *success,

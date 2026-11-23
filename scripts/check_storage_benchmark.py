@@ -16,6 +16,8 @@ EXPECTED = {
     "put_sync",
     "get_hit_typed_crc_warm",
     "get_miss",
+    "get_two_batch_members_sequential_warm",
+    "get_two_batch_members_grouped_warm",
     "snapshot_capture",
     "update_sync",
     "staged_batch_2_sync",
@@ -27,7 +29,7 @@ EXPECTED = {
 def validate(text: str) -> list[dict]:
     objects = [json.loads(line) for line in text.splitlines() if line.strip()]
     if len(objects) != len(EXPECTED) + 2:
-        raise ValueError("exactly one metadata, eight metrics, one summary required")
+        raise ValueError("exactly one metadata, ten metrics, one summary required")
     if any(item.get("schema") != 1 for item in objects):
         raise ValueError("unsupported schema")
     run, *metrics, summary = objects
@@ -114,7 +116,7 @@ def sample() -> str:
 
 class ContractTests(unittest.TestCase):
     def test_valid_report(self) -> None:
-        self.assertEqual(len(validate(sample())), 10)
+        self.assertEqual(len(validate(sample())), 12)
 
     def test_missing_workload(self) -> None:
         rows = sample().splitlines()

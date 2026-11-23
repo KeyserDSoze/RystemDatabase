@@ -48,6 +48,8 @@ have independent TDD unit/integration tests.
 | `put_sync` | `DocumentStore::put` on a new ID | Single CRC RYSF frame synced before acknowledgement |
 | `get_hit_typed_crc_warm` | `DocumentStore::get` on an existing ID | Already-warmed OS file cache; actual CRC + RDB decode |
 | `get_miss` | `get` on an ID not in the in-memory map | In-memory index rejection, no disk read; **not comparable to a query that reaches disk** |
+| `get_two_batch_members_sequential_warm` | Two separate `get` calls on different IDs in the **same BATCH3 frame** | Both verify the complete frame CRC and decode the batch independently |
+| `get_two_batch_members_grouped_warm` | One `get_many([a,b])` for the exact same two keys and seeded schedule | One physical open/metadata/CRC/whole-batch decode for that frame; report **per two-key request**, not per document |
 | `snapshot_capture` | Copy current historical index + tombstone ledger | In-memory O(distinct historical IDs) metadata clone |
 | `update_sync` | `put` replacing an ID | CRC frame + sync, checksum and typed result checked afterward |
 | `staged_batch_2_sync` | Create a staged batch, stage 2 distinct IDs and commit | **Includes staging**, one 2-key CRC batch with one sync |
@@ -58,7 +60,16 @@ Each NDJSON run records the engine, version, embedded-vs-network mode,
 OS/architecture, seed, cardinality, operation count, payload bytes,
 cache/durability description and nanosecond/millisecond units.
 Per-workload rows record sample count, p50/p95/p99/max, total loop time
-and loop-wall ops/s. A final row records total benchmark elapsed time,
+and loop-wall ops/s. The two grouped-vs-sequential workloads use the **same two keys,
+physical frame, random operation schedule, typed results and CRC
+validation**. Both are measured on the same engine and runner in the
+same invocation, but the modes execute sequentially rather than
+interleaved; cache and background runner noise may bias either number.
+They do **not** measure the single-key `get` path and do not
+represent PostgreSQL/SQLite/RocksDB comparisons. No winner claim can
+be based on one shared-runner sample.
+
+A final row records total benchmark elapsed time,
 on-disk bytes and segment count. This is **not a persistent process
 memory benchmark** and does not measure true cold filesystem cache:
 reopening a file is not the same as evicting it from the OS page cache.

@@ -117,6 +117,40 @@ Regression:
 `cargo test -p rystemdb-storage --locked --test batch_commit`
 (and with `--features fault-injection` for process-crash tests).
 
+## Bounded grouped point reads (#91; performance child #90/#12)
+
+`DocumentStore::get_many(&[id, ...])` and
+`DocumentSnapshot::get_many(&[id, ...])` accept **up to 1,024**
+requested document IDs (duplicates allowed) and return
+`Vec<Option<Value>>` in precisely input order. Missing IDs remain
+`None`; an existing typed `Value::Null` remains `Some(Null)`.
+All IDs are validated before any file reads; an overlimit request
+returns `StoreError::InvalidReadBatch` and a malformed ID returns
+`StoreError::InvalidId`. An empty list succeeds with an empty result.
+
+The implementation groups live index locations by **segment ID and
+frame offset**, opens/stat's each segment once per multi-get call,
+and invokes the same full-CRC + strict nested RDB `read_frame` once
+per distinct requested physical frame. Thus several requested IDs
+committed in one RYSF BATCH3 frame are decoded and CRC-verified
+**once for the whole batch**, not once for every ID. Legacy single
+PUT records, different frames, historical snapshots and segment
+rollover are supported. An unlinked or CRC-damaged segment fails
+closed: there are **no persistent cached descriptors, unchecked
+payload shortcuts or weakened checksum checks**. There is no write,
+transaction, wire-format, or on-disk format change.
+
+This is a **new opt-in multi-get API**, not an improvement claim for
+the existing single-key `get`. The perf runner (#88) adds a paired
+two-member batch GET workload: two individual CRC-verified point
+GETs versus one grouped GET on the **same two stored keys** and
+seeded order. Public CI runners do not establish stable latency
+gains; issue #90 remains OPEN for dedicated-hardware profiling,
+repeated A/B samples and syscall/RSS evidence. Parent #12/#2
+remain open.
+
+Regression: `cargo test -p rystemdb-storage --locked --test grouped_get`.
+
 ## Prefix-scan phantom detection for staged batches (#87; child of #6)
 
 The embedded `StagedBatch` can now scan committed snapshot-time live
