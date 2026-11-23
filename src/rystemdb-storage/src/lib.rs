@@ -6,7 +6,7 @@
 //! can be truncated. Complete corrupt frames and damage to older segments fail
 //! closed. This is not yet a multi-process, multi-document ACID engine.
 use rystemdb_core::{decode, encode, CodecError, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -128,6 +128,39 @@ impl DocumentSnapshot {
     pub fn len(&self) -> usize { self.entries.len() }
 
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+}
+
+/// Owned, read-only point-in-time view that automatically tracks the IDs
+/// successfully observed through its `get` method. It does not hold a writer
+/// lock and can be retained while the single writer appends new versions.
+///
+/// The read set is bounded to 1,024 DISTINCT IDs, including reads that
+/// returned None. Only `get` on this wrapper tracks reads: direct access
+/// via DocumentStore or DocumentSnapshot is NOT automatically recorded.
+/// This is not a general ACID transaction, range/predicate tracker or
+/// automatic read-your-own-write view.
+#[derive(Debug)]
+pub struct TrackedSnapshot {
+    snapshot: DocumentSnapshot,
+    read_ids: BTreeSet<String>,
+}
+
+impl TrackedSnapshot {
+    /// Read an immutable committed version, and track this point ID only if
+    /// its read succeeds. Read errors, invalid IDs and the 1,025th distinct
+    /// ID never change the read set.
+    pub fn get(&mut self, id: &str) -> Result<Option<Value>, StoreError> {
+        validate_id(id)?;
+        if self.read_ids.len() >= MAX_BATCH_OPERATIONS && !self.read_ids.contains(id) {
+            return Err(StoreError::InvalidBatch);
+        }
+        let value = self.snapshot.get(id)?;
+        self.read_ids.insert(id.to_owned());
+        Ok(value)
+    }
+
+    /// Number of distinct successfully read point IDs, including missing IDs.
+    pub fn read_count(&self) -> usize { self.read_ids.len() }
 }
 
 #[derive(Debug)]
@@ -300,6 +333,32 @@ impl DocumentStore {
             entries: self.entries.clone(),
             versions: self.versions.clone(),
         }
+    }
+
+    /// Capture a committed read view with automatic successful point-get
+    /// dependency tracking. No payload cloning or OS writer lock is held.
+    /// Call commit_tracked_batch to enforce observed-key version checks.
+    pub fn tracked_snapshot(&self) -> TrackedSnapshot {
+        TrackedSnapshot {
+            snapshot: self.snapshot(),
+            read_ids: BTreeSet::new(),
+        }
+    }
+
+    /// Commit a one-frame atomic batch with all point IDs successfully read
+    /// through this tracked view validated automatically before any append.
+    /// Uses precisely the existing commit_batch_checked OCC preflight and
+    /// 2..=1,024 mutation/64MiB RYSF frame bounds, with no disk format change.
+    ///
+    /// This does not track reads through other store or snapshot handles,
+    /// nor protects range/phantom predicates or offers full serializability.
+    pub fn commit_tracked_batch(
+        &mut self,
+        tracked: &TrackedSnapshot,
+        mutations: &[BatchMutation<'_>],
+    ) -> Result<(), StoreError> {
+        let read_ids = tracked.read_ids.iter().map(String::as_str).collect::<Vec<_>>();
+        self.commit_batch_checked(&tracked.snapshot, &read_ids, mutations)
     }
 
     /// Insert an ABSENT document only if its last committed generation,
