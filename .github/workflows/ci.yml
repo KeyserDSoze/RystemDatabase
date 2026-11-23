@@ -82,6 +82,18 @@ jobs:
           set -euo pipefail
           # Isolated cargo workspace: rusqlite/SQLite C are benchmark-only.
           cargo test --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
+          cargo clippy --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets -- -D warnings
+          python3 scripts/check_native_sqlite_benchmark.py --self-test
+          cargo run --release --manifest-path benchmarks/sqlite-native/Cargo.toml -- \
+            --fixture storage-fixture.ndjson \
+            --output sqlite-rust-benchmark.ndjson
+          python3 scripts/check_native_sqlite_benchmark.py \
+            --native-report sqlite-rust-benchmark.ndjson \
+            --rystem-report storage-benchmark.ndjson
+          # Temporary lock-generation audit; remove once committed and --locked.
+          echo '@@@SQLITE_NATIVE_LOCK_START@@@'
+          cat benchmarks/sqlite-native/Cargo.lock
+          echo '@@@SQLITE_NATIVE_LOCK_END@@@'
       - name: Preserve raw per-commit storage benchmark sample (#88)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -91,6 +103,7 @@ jobs:
             storage-benchmark.ndjson
             storage-fixture.ndjson
             sqlite-benchmark.ndjson
+            sqlite-rust-benchmark.ndjson
           if-no-files-found: error
           retention-days: 14
   npm:
