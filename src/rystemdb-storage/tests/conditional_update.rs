@@ -31,6 +31,14 @@ fn segment_len(root: &Path, segment: u64) -> u64 {
         .unwrap().len()
 }
 
+fn total_log_len(root: &Path) -> u64 {
+    fs::read_dir(root).unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".rdb"))
+        .map(|entry| entry.metadata().unwrap().len())
+        .sum()
+}
+
 #[test]
 fn tdd_existing_key_conditional_replace_detects_stale_snapshot_without_appending() {
     let dir = TempDir::new();
@@ -156,10 +164,10 @@ fn tdd_matching_version_allows_conditional_write_after_reopen_and_rollover() {
     reopened.replace_if_unchanged(&before, "orders/1", &Value::Integer(42)).unwrap();
     assert_eq!(before.get("orders/1").unwrap(), Some(old));
     assert_eq!(reopened.get("orders/1").unwrap(), Some(Value::Integer(42)));
-    let stale_len = segment_len(dir.path(), 9);
+    let stale_len = total_log_len(dir.path());
     assert!(matches!(
         reopened.replace_if_unchanged(&before, "orders/1", &Value::Integer(43)),
         Err(StoreError::Conflict)
     ));
-    assert_eq!(segment_len(dir.path(), 9), stale_len);
+    assert_eq!(total_log_len(dir.path()), stale_len);
 }
