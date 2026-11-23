@@ -223,7 +223,7 @@ impl<'a> Reader<'a> {
                 if count > self.input.len().saturating_sub(self.offset) / 5 {
                     return Err(CodecError::UnexpectedEof);
                 }
-                let mut result = BTreeMap::new();
+                let mut result: BTreeMap<String, Value> = BTreeMap::new();
                 for _ in 0..count {
                     let key = self.string()?;
                     // #78: Validate the key BEFORE decoding the (potentially
