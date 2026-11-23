@@ -117,6 +117,57 @@ Regression:
 `cargo test -p rystemdb-storage --locked --test batch_commit`
 (and with `--features fault-injection` for process-crash tests).
 
+## Automatically tracked point reads for optimistic batch commits (#84; child of #6)
+
+`DocumentStore::tracked_snapshot()` returns an owned, read-only
+`TrackedSnapshot` with `get(&mut self, id)` and `read_count()`. Every
+**successful** point `get` automatically records that exact ID as a
+read dependency, including reads returning `None`, without requiring
+the caller to manually list it. Repeated reads of the same ID count once;
+an explicit RDB `Null` is distinct from absence and all typed document
+values retain the historical snapshot semantics.
+
+```rust
+let mut view = db.tracked_snapshot();
+let bob = view.get("oncall/bob")?;
+// Choose changes based on bob, then commit later, after other writes may
+// have occurred; all successfully observed point IDs are checked.
+db.commit_tracked_batch(&view, &[
+    BatchMutation::Put { id: "oncall/alice", value: &Value::Bool(true) },
+    BatchMutation::Put { id: "audit/decision", value: &Value::Bool(true) },
+])?;
+```
+
+`commit_tracked_batch` reuses the exact `commit_batch_checked`
+preconditions with the automatically retained read IDs. If another write
+changes a previously read point key, even through
+`absent → PUT → DELETE → absent` or a PUT with identical payload,
+the batch fails with `StoreError::Conflict` **before appending data**.
+An unobserved key changing does not create a conflict. The tracked view
+owns no writer lock; historical point reads remain stable during rollover,
+writer reopening, and concurrent cooperative appends. The underlying
+single-frame synced BATCH3 encoding, maximum 1,024 mutation count, and
+64 MiB frame limit do not change.
+
+A tracked view holds at most **1,024 distinct successful point reads**:
+the 1,025th new ID returns `InvalidBatch` before disk access, repeated
+IDs remain usable even at the limit, invalid IDs return `InvalidId`,
+and corrupt/I/O-failing point reads are not recorded. Snapshot capture
+still clones O(distinct historical IDs) metadata; each tracked read ID
+adds bounded set metadata until the view is dropped. Point tracking is
+**only** through `TrackedSnapshot::get`; `DocumentStore::get` and
+`DocumentSnapshot::get` do not participate.
+
+**Not serializable transactions:** range/phantom/predicate reads cannot be
+tracked by this wrapper, reads are not automatically discovered outside
+its `get`, mutations are not staged or read-your-own-writes, and
+there is no transaction ID, multi-frame commit, multiversion GC,
+compaction, multi-writer isolation or distributed ACID guarantee.
+Parent issue #6 remains open.
+
+Regression:
+`cargo test -p rystemdb-storage --locked --test tracked_snapshot`.
+
 ## Explicit point-read dependency validation for atomic batches (#83; child of #6)
 
 `DocumentStore::commit_batch_checked(&snapshot, &[read_id, ...],

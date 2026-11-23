@@ -70,6 +70,28 @@ The body is <=64 MiB and holds 2..=1,024 mutations. This is not a
 general ACID transaction manager, serializable MVCC, replication, or
 multiframe commit. Keep parent #6/#2 OPEN.
 
+## Automatically tracked point-read snapshots (#84)
+
+```sh
+cargo test -p rystemdb-storage --locked --test tracked_snapshot
+```
+
+Use `let mut view = db.tracked_snapshot();` and
+`view.get(id)?` to obtain an immutable committed point-read view that
+**automatically remembers successfully accessed IDs**, including
+missing documents. Use `db.commit_tracked_batch(&view, &mutations)` to
+reject any stale read-only dependency or changed mutation key before
+appending the same CRC-verified single-frame batch as #82.
+Read/write overlap, rollover/reopen, tombstone ABA, typed RDB null and
+nested values, unchanged unobserved keys, invalid IDs, corrupt disk
+reads and 1,024-distinct-read capacity have focused RED/GREEN tests.
+
+`TrackedSnapshot` is not an automatically tracked general SQL
+transaction. It does not register direct reads via other APIs, predicates
+or range/phantom queries, and does not stage writes. Old `snapshot`,
+`commit_batch` and explicit `commit_batch_checked` remain unchanged.
+Keep #6 open.
+
 ## Atomic batch point-read-set validation (#83)
 
 ```sh
