@@ -104,7 +104,7 @@ fn tdd_native_sqlite_wal_full_typed_get_and_atomic_failure_rollback() {
     assert_eq!(db.get_typed("docs/absent").unwrap(),None);
     assert_eq!(db.update("docs/a",&encode(&Value::Null).unwrap()).unwrap(),1);
     assert_eq!(db.get_typed("docs/a").unwrap().unwrap().1,Value::Null);
-    assert_eq!(db.put_pair("docs/b",&bytes,"docs/a",&bytes).is_err(),true,
+    assert!(db.put_pair("docs/b",&bytes,"docs/a",&bytes).is_err(),
        "second duplicate must ROLLBACK first insert, not leak partial commit");
     assert_eq!(db.get_typed("docs/b").unwrap(),None);
     assert_eq!(db.delete("docs/a").unwrap(),1);
