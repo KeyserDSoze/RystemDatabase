@@ -3,7 +3,8 @@
 //!     --records 128 --operations 256 --payload-bytes 128 --seed 42
 //! This is NOT a fair cross-engine comparison or a timing-based unit test.
 //! CI runners are shared, and measurements must be repeated on dedicated hosts.
-use rystemdb_core::Value;
+use rystemdb_core::{encode, Value};
+use std::fmt::Write as _;
 use rystemdb_storage::performance::{
     ns_to_ms, operations_per_second, seeded_indexes, summarize, synthetic_document,
 };
@@ -24,6 +25,7 @@ struct Config {
     payload_bytes: usize,
     seed: u64,
     json_output: Option<PathBuf>,
+    fixture_output: Option<PathBuf>,
 }
 
 fn input_error(message: impl Into<String>) -> io::Error {
@@ -37,6 +39,7 @@ fn config() -> Result<Config> {
         payload_bytes: 128,
         seed: 42,
         json_output: None,
+        fixture_output: None,
     };
     let mut arguments = std::env::args().skip(1);
     while let Some(flag) = arguments.next() {
@@ -47,6 +50,7 @@ fn config() -> Result<Config> {
             "--payload-bytes" => result.payload_bytes = value.parse()?,
             "--seed" => result.seed = value.parse()?,
             "--json-output" => result.json_output = Some(PathBuf::from(value)),
+            "--fixture-output" => result.fixture_output = Some(PathBuf::from(value)),
             _ => return Err(input_error(format!("unknown option {flag}")).into()),
         }
     }
@@ -121,6 +125,70 @@ fn disk_footprint(root: &Path) -> Result<(u64, usize)> {
     Ok((bytes, segments))
 }
 
+
+fn hex_rdb_frame(value: &Value) -> Result<String> {
+    let data = encode(value)?;
+    let mut hex = String::with_capacity(data.len().saturating_mul(2));
+    for byte in data {
+        write!(&mut hex, "{byte:02x}")?;
+    }
+    Ok(hex)
+}
+
+/// Export the *exact* encoded typed documents, seeded read/update sequence and
+/// 2-key batch payloads used below. This is a versioned, bounded fixture for
+/// external competitor adapters: Python SQLite runs on the same bytes, not
+/// approximations or independently seeded mock documents. Exporting is done
+/// BEFORE timing, and never changes any database on-disk RYSF frame.
+fn export_rdb_fixture(
+    cfg: &Config,
+    keys: &[String],
+    corpus: &[Value],
+    indexes: &[usize],
+    updates: &[Value],
+    batch_keys: &[(String, String)],
+) -> Result<()> {
+    let Some(path) = cfg.fixture_output.as_ref() else { return Ok(()); };
+    if cfg.records > 256 || cfg.operations > 512 || cfg.payload_bytes > 1024 {
+        return Err(input_error(
+            "--fixture-output requires records <=256, operations <=512 and payload <=1024 bytes",
+        ).into());
+    }
+    let mut rows = Vec::with_capacity(1 + cfg.records + cfg.operations * 3);
+    rows.push(format!(
+        r#"{{"schema":1,"kind":"fixture_run","seed":{},"records":{},"operations":{},"payload_bytes":{},"engine":"rystemdb-storage","value_encoding":"rdb_v1_frame_hex"}}"#,
+        cfg.seed, cfg.records, cfg.operations, cfg.payload_bytes,
+    ));
+    for (id, value) in keys.iter().zip(corpus) {
+        rows.push(format!(
+            r#"{{"schema":1,"kind":"initial","id":"{id}","value_hex":"{}"}}"#,
+            hex_rdb_frame(value)?,
+        ));
+    }
+    for (sequence, &index) in indexes.iter().enumerate() {
+        let id = &keys[index];
+        rows.push(format!(
+            r#"{{"schema":1,"kind":"read","sequence":{sequence},"id":"{id}"}}"#,
+        ));
+    }
+    for (sequence, &index) in indexes.iter().enumerate() {
+        let id = &keys[index];
+        rows.push(format!(
+            r#"{{"schema":1,"kind":"update","sequence":{sequence},"id":"{id}","value_hex":"{}"}}"#,
+            hex_rdb_frame(&updates[sequence])?,
+        ));
+    }
+    let null_hex = hex_rdb_frame(&Value::Null)?;
+    for (sequence, (id_a, id_b)) in batch_keys.iter().enumerate() {
+        rows.push(format!(
+            r#"{{"schema":1,"kind":"batch","sequence":{sequence},"id_a":"{id_a}","value_a_hex":"{}","id_b":"{id_b}","value_b_hex":"{null_hex}"}}"#,
+            hex_rdb_frame(&Value::Integer(sequence as i64))?,
+        ));
+    }
+    fs::write(path, rows.join("\n") + "\n")?;
+    Ok(())
+}
+
 fn run() -> Result<()> {
     let cfg = config()?;
     let root = TempRoot::create(cfg.seed)?;
@@ -140,6 +208,8 @@ fn run() -> Result<()> {
     let batch_keys = (0..cfg.operations).map(|i| (
         format!("batch/{i:08}/a"), format!("batch/{i:08}/b"),
     )).collect::<Vec<_>>();
+
+    export_rdb_fixture(&cfg, &keys, &corpus, &indexes, &updates, &batch_keys)?;
 
     let mut db = DocumentStore::open(root.path())?;
     let mut metrics = Vec::new();
