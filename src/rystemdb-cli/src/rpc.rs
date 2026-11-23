@@ -9,12 +9,12 @@ use crate::tls;
 use rystemdb_core::{decode as decode_document, encode as encode_document, Value};
 use rystemdb_protocol::{read_frame, read_frame_with_limit, write_frame, Frame, Kind, Operation, MAX_PAYLOAD_BYTES};
 use rystemdb_storage::DocumentStore;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const WORKERS: usize = 8;
 const BACKLOG: usize = 32;
@@ -24,6 +24,104 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 // 1,0 + u16(32) + a 32-byte bearer token. Reject a larger *declared*
 // pre-authentication frame before allocating its body or holding a worker.
 const MAX_PRE_AUTH_PAYLOAD_BYTES: usize = 36;
+
+
+// #73: A socket timeout applies to EACH system read/write; a peer sending one
+// byte every 2 seconds can otherwise keep read_exact (and rustls) busy for
+// minutes. Preserve one absolute budget starting at TCP acceptance, even while
+// the connection is waiting in the bounded worker queue. Enforce the remaining
+// budget at the *underlying socket* layer so TLS record parsing cannot reset it.
+struct DeadlineSocket {
+    socket: TcpStream,
+    pre_auth_until: Option<Instant>,
+}
+
+impl DeadlineSocket {
+    fn new(socket: TcpStream, accepted_at: Instant) -> io::Result<Self> {
+        socket.set_read_timeout(Some(TIMEOUT))?;
+        socket.set_write_timeout(Some(TIMEOUT))?;
+        let _ = socket.set_nodelay(true);
+        Ok(Self {
+            socket,
+            pre_auth_until: Some(accepted_at + TIMEOUT),
+        })
+    }
+
+    fn remaining(&self) -> io::Result<Option<Duration>> {
+        self.pre_auth_until.map(|until| {
+            until.checked_duration_since(Instant::now())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or_else(|| io::Error::new(
+                    io::ErrorKind::TimedOut, "pre-authentication deadline expired"
+                ))
+        }).transpose()
+    }
+
+    fn before_read(&self) -> io::Result<()> {
+        if let Some(remaining) = self.remaining()? {
+            self.socket.set_read_timeout(Some(remaining))?;
+        }
+        Ok(())
+    }
+
+    fn before_write(&self) -> io::Result<()> {
+        if let Some(remaining) = self.remaining()? {
+            self.socket.set_write_timeout(Some(remaining))?;
+        }
+        Ok(())
+    }
+
+    fn finish_pre_auth(&mut self) -> io::Result<()> {
+        // Do not let a peer authenticate AFTER the absolute deadline and
+        // restore an unlimited session by completing HELLO too late.
+        self.remaining()?;
+        self.socket.set_read_timeout(Some(TIMEOUT))?;
+        self.socket.set_write_timeout(Some(TIMEOUT))?;
+        self.pre_auth_until = None;
+        Ok(())
+    }
+
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        self.socket.set_read_timeout(timeout)
+    }
+}
+
+impl Read for DeadlineSocket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.before_read()?;
+        self.socket.read(buf)
+    }
+}
+
+impl Write for DeadlineSocket {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.before_write()?;
+        self.socket.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.before_write()?;
+        self.socket.flush()
+    }
+}
+
+// Both plaintext RSWP and rustls StreamOwned must release their deadline
+// ONLY after a valid authenticated HELLO response has been flushed.
+trait PreAuthTransport: Read + Write {
+    fn finish_pre_auth(&mut self) -> io::Result<()>;
+}
+
+impl PreAuthTransport for DeadlineSocket {
+    fn finish_pre_auth(&mut self) -> io::Result<()> {
+        DeadlineSocket::finish_pre_auth(self)
+    }
+}
+
+impl PreAuthTransport for rustls::StreamOwned<DeadlineSocket> {
+    fn finish_pre_auth(&mut self) -> io::Result<()> {
+        self.sock.finish_pre_auth()
+    }
+}
 
 const OK: u16 = 0;
 const NOT_FOUND: u16 = 1;
@@ -109,7 +207,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let db = Arc::new(Mutex::new(
         DocumentStore::open(data).map_err(|err| format!("RPC database open failed: {err}"))?
     ));
-    let (sender, receiver) = mpsc::sync_channel::<TcpStream>(BACKLOG);
+    let (sender, receiver) = mpsc::sync_channel::<(TcpStream, Instant)>(BACKLOG);
     let shared_rx = Arc::new(Mutex::new(receiver));
     for _ in 0..WORKERS {
         let db = Arc::clone(&db);
@@ -122,8 +220,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 let Ok(receiver) = rx.lock() else { break };
                 receiver.recv()
             };
-            let Ok(stream) = accepted else { break };
-            handle_client(stream, &db, policy.as_deref(), tls_config.as_ref(),
+            let Ok((stream, accepted_at)) = accepted else { break };
+            handle_client(stream, accepted_at, &db, policy.as_deref(), tls_config.as_ref(),
                 mtls_rules.as_deref().map(Vec::as_slice));
         });
     }
@@ -137,7 +235,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         match accepted {
             Ok(stream) => {
                 // Drop clients promptly if the bounded worker queue is full.
-                let _ = sender.try_send(stream);
+                let _ = sender.try_send((stream, Instant::now()));
             }
             Err(err) => eprintln!("RPC accept error: {err}"),
         }
@@ -145,16 +243,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
+fn handle_client(stream: TcpStream, accepted_at: Instant, db: &Mutex<DocumentStore>,
     policy: Option<&AuthPolicy>, tls: Option<&Arc<rustls::ServerConfig>>,
     mtls_rules: Option<&[(String, Grant)]>)
 {
-    if stream.set_read_timeout(Some(TIMEOUT)).is_err()
-        || stream.set_write_timeout(Some(TIMEOUT)).is_err()
-    {
+    let Ok(stream) = DeadlineSocket::new(stream, accepted_at) else {
         return;
-    }
-    let _ = stream.set_nodelay(true);
+    };
     if let Some(config) = tls {
         let Ok(conn) = rustls::ServerConnection::new(Arc::clone(config)) else {
             return;
@@ -236,7 +331,7 @@ fn handle_client(mut stream: TcpStream, db: &Mutex<DocumentStore>,
 
 // Returns true only when an explicit final RSWP response requested teardown.
 // Invalid/truncated frames and I/O failures do not receive a grace period.
-fn handle_client_frames<S: Read + Write>(
+fn handle_client_frames<S: PreAuthTransport>(
     stream: &mut S, db: &Mutex<DocumentStore>, policy: Option<&AuthPolicy>,
     identity_grants: Option<&[Grant]>,
 ) -> bool {
@@ -256,6 +351,7 @@ fn handle_client_frames<S: Read + Write>(
             Ok(request) => request,
             Err(_) => return false, // invalid/oversized/truncated frames fail closed
         };
+        let was_greeted = greeted;
         if request.kind != Kind::Request {
             return false;
         }
@@ -304,6 +400,9 @@ fn handle_client_frames<S: Read + Write>(
         // has been flushed to the underlying transport. Also flush normal CRUD
         // replies before waiting for another request on persistent connections.
         if stream.flush().is_err() { return false; }
+        if !was_greeted && greeted && stream.finish_pre_auth().is_err() {
+            return false;
+        }
         if close { return true; }
     }
     false

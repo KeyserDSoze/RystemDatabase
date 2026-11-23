@@ -51,6 +51,17 @@ cargo run -p rystemdb-cli -- rpc-serve --data ./data --listen 127.0.0.1:8790
 
 The server requires HELLO v1.0 and uses RSWP frames with typed binary RDB values, not JSON; see [RPC_SERVER.md](RPC_SERVER.md). Never bind a non-loopback address or tunnel the unauthenticated prototype remotely. Future TLS/auth is tracked in #39.
 
+## Absolute pre-authentication RPC deadline regression (#73)
+
+`cargo test -p rystemdb-cli --locked --test rpc_auth tdd_absolute_pre_auth_deadline_closes_trickling_hello_header`
+and `cargo test -p rystemdb-cli --locked --test rpc_tls tdd_tls_handshake_trickle_does_not_reset_absolute_pre_auth_deadline`
+launch real localhost Rust subprocesses. Two 1.7-second-separated partial
+header writes reproduce the old rolling per-read timeout flaw; the server
+must terminate the unauthenticated connection within the original 3-second
+absolute accept-to-HELLO budget. The deadline applies to queued sockets
+and the TCP transport under rustls as well, and is cleared only after a
+successful HELLO response. All post-authenticated RPC limits are unchanged.
+
 ## Rust RPC client TDD (source on main)
 
 ```sh

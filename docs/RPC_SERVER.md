@@ -32,14 +32,27 @@ magic/version/kind/op/status/header checks and 128-frame per-connection
 limit are unchanged. The source-only Rust, Node and .NET clients preserve
 their existing HELLO and CRUD framing.
 
-This is one resource-exhaustion mitigation, **not** comprehensive DoS
-protection: incomplete headers or incomplete bodies of **36 bytes or
-less** may still occupy a worker up to the existing 3-second timeout,
-and no per-principal fairness/quotas or runtime heap budget is guaranteed.
-The existing 8 workers and 32 queued sockets are still a limited local
-prototype; do not expose any non-loopback RPC listener. Full handshake
-timeouts, rate/backpressure limits, adversarial fuzzing and remote policy
-remain [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
+**Absolute pre-authentication deadline (#73):** each accepted TCP socket gets
+one **3-second wall-clock budget**, measured from listener acceptance and
+including time waiting in the 32-socket queue. Every underlying socket
+read/write checks the remaining budget, even when the RSWP header/body is
+sent in tiny fragments or rustls is processing a TLS1.3/mTLS handshake.
+Sending another byte does **not** reset the deadline. The budget ends only
+after a successful HELLO response has been flushed; authenticated connections
+then retain the existing 3-second **per-I/O** timeouts, 128-request limit
+and unchanged 16 MiB CRUD frame limit. Rejected/truncated sessions close
+without storage access. Real subprocess regression tests cover a drip-fed
+RSWP HELLO and partial TLS record header.
+
+These are scoped resource-exhaustion mitigations, **not** comprehensive DoS
+protection: eight workers and 32 queued sockets may still be saturated for
+the bounded handshake interval, and no per-principal fairness/quotas or
+runtime heap budget is guaranteed. Longer authenticated sessions remain
+subject only to per-I/O timeouts; malicious authorized clients may also
+trickle large frames. Do not expose any non-loopback RPC listener. Full
+rate/backpressure controls, authenticated-session deadlines, cancellation,
+adversarial fuzzing and remote policy remain in
+[#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 `PING` (operation=2) accepts **empty** payload and returns an empty success payload. The prototype does not yet negotiate API capabilities, authentication, schema version or topology.
 
