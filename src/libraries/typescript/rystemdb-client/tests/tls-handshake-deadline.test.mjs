@@ -2,17 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { RystemLocalClient } from "../src/client.ts";
 
-const fixtures = fileURLToPath(
-  new URL("../../../../rystemdb-cli/tests/fixtures/tls/", import.meta.url));
-
-// #75 RED: real TCP peer, real node:tls client. The server deliberately
-// trickles only three bytes of a TLS record header; each 1.5-second gap is
-// shorter than the SDK's 3-second rolling socket-inactivity timeout, but
-// the *total* incomplete handshake exceeds the proposed 3-second deadline.
-test("TDD RED #75: TLS handshake trickle cannot extend connect-to-HELLO beyond absolute 3s", {
+// #75: a hypothesis of indefinite TLS handshake trickling was NOT reproduced
+// against the unmodified baseline: node:tls already timed out on this partial
+// record header. Keep the real TCP adversarial test as a regression, not as a
+// claim of a newly implemented absolute timeout.
+test("TDD regression #75: incomplete TLS record trickle closes within current socket timeout", {
   timeout: 12000,
 }, async () => {
   const sockets = new Set();
@@ -59,7 +55,7 @@ test("TDD RED #75: TLS handshake trickle cannot extend connect-to-HELLO beyond a
     assert.match(String(observed.error), /deadline|timeout/i,
       "timeout must be an explicit client-side handshake deadline");
     assert.ok(Date.now() - started < 4300,
-      "TLS handshake rejection was delayed beyond the absolute budget");
+      "incomplete TLS handshake was not terminated within the observed socket timeout");
   } finally {
     clearTimeout(watchdog);
     for (const socket of sockets) socket.destroy();

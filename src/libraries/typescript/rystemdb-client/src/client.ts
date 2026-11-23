@@ -15,6 +15,9 @@ import { encodeRdb, decodeRdb, type RdbValue } from "./rdb.ts";
 const TIMEOUT_MS = 3000;
 const U64_MAX = (1n << 64n) - 1n;
 const MAX_PENDING = 120;
+// #76: limit the unflushed native TCP/TLS writable queue to one maximum RSWP
+// frame; the separate 120 in-flight request cap does NOT bound byte memory.
+const MAX_OUTBOUND_BUFFER_BYTES = MAX_PAYLOAD_BYTES + HEADER_LEN;
 
 export class RystemRpcError extends Error {
   readonly status: number;
@@ -43,6 +46,7 @@ export class RystemLocalClient {
   private receivedFrameBytes = 0;
   private nextId = 1n;
   private closed = false;
+  private writeBackpressured = false;
 
   private constructor(socket: Socket) {
     this.socket = socket;
@@ -51,6 +55,9 @@ export class RystemLocalClient {
       socket.destroy(new Error("Rystem RPC socket inactivity timeout"));
     });
     socket.on("data", (chunk: Buffer) => this.onData(chunk));
+    // Node write(false) means "stop queuing"; a subsequent drain is the
+    // ONLY signal that the writable stream can accept another frame.
+    socket.on("drain", () => { this.writeBackpressured = false; });
     socket.on("error", (error: Error) => this.failAll(error));
     socket.on("close", () => this.failAll(new Error("Rystem RPC connection closed")));
   }
@@ -258,15 +265,43 @@ export class RystemLocalClient {
     if (this.nextId > U64_MAX) {
       return Promise.reject(new Error("Rystem RPC correlation IDs exhausted"));
     }
-    const id = this.nextId++;
+    const id = this.nextId;
     const bytes = encode({ kind: 1, operation, requestId: id, status: 0, payload });
+    const buffered = this.socket.writableLength;
+    // Check BEFORE handing ownership to node:net/node:tls. Unsent requests
+    // may be retried explicitly by the caller, whereas a write already
+    // accepted by the socket has an UNCERTAIN outcome on failure.
+    if (this.writeBackpressured || this.socket.writableNeedDrain ||
+        !Number.isSafeInteger(buffered) || buffered < 0 ||
+        buffered > MAX_OUTBOUND_BUFFER_BYTES - bytes.length) {
+      return Promise.reject(new Error(
+        "Rystem RPC outgoing write backpressure: request not sent"
+      ));
+    }
+    this.nextId += 1n;
     return new Promise<Frame>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.socket.destroy(new Error("Rystem RPC request timeout"));
       }, TIMEOUT_MS);
       timer.unref();
       this.pending.set(id, { operation, resolve, reject, timer });
-      this.socket.write(bytes);
+      try {
+        // A false return does NOT mean this request failed: it was queued.
+        // Wait for "drain" before accepting any subsequent outgoing frame.
+        if (!this.socket.write(bytes)) {
+          this.writeBackpressured = true;
+        }
+      } catch (error) {
+        // A synchronous transport failure must not leave an orphaned waiter
+        // or timer. Tear down the connection; other accepted writes may
+        // already be in flight and must not be silently retried.
+        const failure = error instanceof Error ? error :
+          new Error("Rystem RPC synchronous socket write failure");
+        this.pending.delete(id);
+        clearTimeout(timer);
+        reject(failure);
+        this.socket.destroy(failure);
+      }
     });
   }
 
@@ -327,6 +362,7 @@ export class RystemLocalClient {
   private failAll(error: Error): void {
     if (this.closed && this.pending.size === 0) return;
     this.closed = true;
+    this.writeBackpressured = false;
     this.receivedHeaderBytes = 0;
     this.receivedFrameBytes = 0;
     this.receiveFrame = null;
