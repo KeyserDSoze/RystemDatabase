@@ -16,6 +16,10 @@ const MAGIC: &[u8; 4] = b"RYSF";
 const VERSION: u8 = 1;
 const PUT: u8 = 1;
 const DELETE: u8 = 2;
+// #82: One authenticated-by-CRC physical record for an entire mutation group.
+// Older binaries fail closed on this new opcode; legacy PUT/DELETE unchanged.
+const BATCH: u8 = 3;
+const MAX_BATCH_OPERATIONS: usize = 1024;
 const HEADER_SIZE: usize = 20;
 const MAX_ID_BYTES: usize = 1024;
 const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
@@ -27,6 +31,7 @@ pub enum StoreError {
     Codec(CodecError),
     InvalidId,
     InvalidSegmentLimit,
+    InvalidBatch,
     Locked,
     /// A key changed since the supplied committed snapshot, or it was absent
     /// at capture time (absent-key ABA is intentionally unsupported).
@@ -44,6 +49,7 @@ impl fmt::Display for StoreError {
             StoreError::Codec(err) => write!(f, "document codec error: {err}"),
             StoreError::InvalidId => write!(f, "document ID must be 1..=1024 UTF-8 bytes"),
             StoreError::InvalidSegmentLimit => write!(f, "segment limit must be at least 64 bytes"),
+            StoreError::InvalidBatch => write!(f, "batch must contain 2..=1024 unique, valid mutations"),
             StoreError::Locked => write!(f, "database directory is already open for writing"),
             StoreError::Conflict => write!(f, "document version conflict: snapshot is stale or key absent"),
             StoreError::InvalidSnapshot => write!(f, "snapshot belongs to a different database root"),
@@ -66,6 +72,23 @@ impl From<io::Error> for StoreError {
 }
 impl From<CodecError> for StoreError {
     fn from(error: CodecError) -> Self { Self::Codec(error) }
+}
+
+/// One operation in an experimental single-frame, multi-document commit.
+/// All keys must be distinct, and DELETE requires an existing snapshot key.
+/// A PUT may create or overwrite a key if its snapshot version is unchanged.
+#[derive(Clone, Copy, Debug)]
+pub enum BatchMutation<'a> {
+    Put { id: &'a str, value: &'a Value },
+    Delete { id: &'a str },
+}
+
+impl BatchMutation<'_> {
+    fn id(&self) -> &str {
+        match self {
+            Self::Put { id, .. } | Self::Delete { id } => id,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,9 +233,25 @@ impl DocumentStore {
                             entries.remove(&document_id);
                         }
                         // #81: Every valid committed frame, including DELETE,
-                        // advances the last-known version. A tombstone is
-                        // not equivalent to a never-seen key for insert CAS.
+                        // advances the last-known version.
                         versions.insert(document_id, location);
+                        offset = offset.checked_add(frame_len).ok_or_else(|| {
+                            StoreError::Corrupt("segment offset overflow".into())
+                        })?;
+                    }
+                    FrameRead::Batch { changes, length: frame_len } => {
+                        // #82: validate CRC and *all* members before replay
+                        // publishes any of the batch. All keys share the
+                        // same (segment,frame offset) version token.
+                        let location = Location { segment: *id, offset };
+                        for (document_id, value) in changes {
+                            if value.is_some() {
+                                entries.insert(document_id.clone(), location);
+                            } else {
+                                entries.remove(&document_id);
+                            }
+                            versions.insert(document_id, location);
+                        }
                         offset = offset.checked_add(frame_len).ok_or_else(|| {
                             StoreError::Corrupt("segment offset overflow".into())
                         })?;
@@ -288,6 +327,63 @@ impl DocumentStore {
             return Err(StoreError::Conflict);
         }
         self.put(id, value)
+    }
+
+    /// Commit a bounded multi-document change set as ONE checksummed,
+    /// synced RYSF frame, or commit none of it. Every key's last committed
+    /// generation must match the supplied snapshot; missing-key DELETEs,
+    /// duplicate IDs and malformed/overbudget batches fail before append.
+    /// Unrelated keys may have changed. Values and frame bytes are completely
+    /// serialized before the single append; index/version changes publish
+    /// only after sync_data succeeds. A crash after an unsynced complete
+    /// frame may replay the WHOLE batch or none, never a subset.
+    ///
+    /// This is *not* SQL/serializable transaction isolation, multi-writer
+    /// concurrency, a multi-frame transaction, replication or MVCC GC.
+    pub fn commit_batch(
+        &mut self, snapshot: &DocumentSnapshot, mutations: &[BatchMutation<'_>],
+    ) -> Result<(), StoreError> {
+        use std::collections::BTreeSet;
+        self.ensure_healthy()?;
+        if self.root != snapshot.root {
+            return Err(StoreError::InvalidSnapshot);
+        }
+        if !(2..=MAX_BATCH_OPERATIONS).contains(&mutations.len()) {
+            return Err(StoreError::InvalidBatch);
+        }
+        let mut seen = BTreeSet::new();
+        for mutation in mutations {
+            let id = mutation.id();
+            validate_id(id)?;
+            if !seen.insert(id) {
+                return Err(StoreError::InvalidBatch);
+            }
+            if self.versions.get(id) != snapshot.versions.get(id) {
+                return Err(StoreError::Conflict);
+            }
+            if matches!(mutation, BatchMutation::Delete { .. })
+                && (!snapshot.entries.contains_key(id) || !self.entries.contains_key(id))
+            {
+                return Err(StoreError::Conflict);
+            }
+        }
+
+        // Build a single bounded frame and owned publication set before any
+        // disk I/O; precondition failures leave both log and indexes untouched.
+        let encoded = frame_batch(mutations)?;
+        let changes = mutations.iter().map(|m| (
+            m.id().to_owned(), matches!(m, BatchMutation::Put { .. }),
+        )).collect::<Vec<_>>();
+        let location = self.append(&encoded)?;
+        for (id, is_put) in changes {
+            if is_put {
+                self.entries.insert(id.clone(), location);
+            } else {
+                self.entries.remove(&id);
+            }
+            self.versions.insert(id, location);
+        }
+        Ok(())
     }
 
     /// Replace an EXISTING committed document only if its version still
@@ -445,6 +541,14 @@ fn read_indexed(
         FrameRead::Complete { id: stored_id, value: Some(value), .. } if stored_id == id => {
             Ok(Some(value))
         }
+        FrameRead::Batch { changes, .. } => {
+            changes.into_iter().find_map(|(key, value)| {
+                if key == id { value } else { None }
+            }).map(Some).ok_or_else(|| StoreError::Corrupt(format!(
+                "indexed batch record {id} missing or deleted at segment {} offset {}",
+                location.segment, location.offset
+            )))
+        }
         _ => Err(StoreError::Corrupt(format!(
             "indexed record {id} could not be verified at segment {} offset {}",
             location.segment, location.offset
@@ -572,8 +676,112 @@ fn frame(id: &str, encoded: Option<&[u8]>) -> Result<Vec<u8>, StoreError> {
     Ok(output)
 }
 
+/// A valid batch is decoded/CRC-verified as a unit before any member can
+/// become visible. Readers of one indexed ID reverify that entire frame.
+
+// #82: id_len=0 reserved in the outer RYSF header and the entire batch body
+// protected by the same CRC as legacy PUT/DELETE. Body format:
+// u16 BE count (2..=1024); each: u8 op, u16 BE id_len, UTF-8 id,
+// u32 BE RDB value_len, RDB bytes (empty for DELETE). No trailing bytes.
+// Aggregate body <=64 MiB, unique document IDs and fully decoded values.
+fn frame_batch(mutations: &[BatchMutation<'_>]) -> Result<Vec<u8>, StoreError> {
+    if !(2..=MAX_BATCH_OPERATIONS).contains(&mutations.len()) {
+        return Err(StoreError::InvalidBatch);
+    }
+    let mut body = Vec::new();
+    body.extend_from_slice(&(mutations.len() as u16).to_be_bytes());
+    for mutation in mutations {
+        let id = mutation.id();
+        validate_id(id)?;
+        let data = match mutation {
+            BatchMutation::Put { value, .. } => Some(encode(value)?),
+            BatchMutation::Delete { .. } => None,
+        };
+        let payload = data.as_deref().unwrap_or(&[]);
+        let added = 1 + 2 + id.len() + 4 + payload.len();
+        if body.len().checked_add(added).is_none_or(|n| n > MAX_DOCUMENT_BYTES) {
+            return Err(StoreError::Codec(CodecError::TooLarge));
+        }
+        body.push(if data.is_some() { PUT } else { DELETE });
+        body.extend_from_slice(&(id.len() as u16).to_be_bytes());
+        body.extend_from_slice(id.as_bytes());
+        body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        body.extend_from_slice(payload);
+    }
+    let mut output = Vec::with_capacity(HEADER_SIZE + body.len());
+    output.extend_from_slice(MAGIC);
+    output.push(VERSION);
+    output.push(BATCH);
+    output.extend_from_slice(&[0, 0]);
+    output.extend_from_slice(&0_u32.to_be_bytes()); // no outer ID
+    output.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    output.extend_from_slice(&[0; 4]);
+    output.extend_from_slice(&body);
+    let checksum = crc32(&[&output[4..16], &body]);
+    output[16..20].copy_from_slice(&checksum.to_be_bytes());
+    Ok(output)
+}
+
+fn decode_batch(bytes: &[u8], offset: u64) -> Result<Vec<(String, Option<Value>)>, StoreError> {
+    use std::collections::BTreeSet;
+    fn take<'a>(bytes: &'a [u8], cursor: &mut usize, count: usize)
+        -> Result<&'a [u8], StoreError>
+    {
+        let end = cursor.checked_add(count)
+            .ok_or_else(|| StoreError::Corrupt("batch offset overflow".into()))?;
+        let result = bytes.get(*cursor..end)
+            .ok_or_else(|| StoreError::Corrupt("truncated batch member".into()))?;
+        *cursor = end;
+        Ok(result)
+    }
+
+    let mut cursor = 0;
+    let count = u16::from_be_bytes(take(bytes, &mut cursor, 2)?
+        .try_into().expect("2-byte batch count")) as usize;
+    if !(2..=MAX_BATCH_OPERATIONS).contains(&count) || count > (bytes.len()-2)/8 {
+        return Err(StoreError::Corrupt(format!("invalid batch member count at {offset}")));
+    }
+    let mut changes = Vec::with_capacity(count);
+    let mut seen = BTreeSet::new();
+    for _ in 0..count {
+        let op = take(bytes, &mut cursor, 1)?[0];
+        let id_len = u16::from_be_bytes(take(bytes, &mut cursor, 2)?
+            .try_into().expect("2-byte batch ID length")) as usize;
+        if !(1..=MAX_ID_BYTES).contains(&id_len) {
+            return Err(StoreError::Corrupt(format!("invalid batch ID length at {offset}")));
+        }
+        let id_bytes = take(bytes, &mut cursor, id_len)?;
+        let id = std::str::from_utf8(id_bytes)
+            .map_err(|_| StoreError::Corrupt(format!("invalid batch UTF-8 ID at {offset}")))?;
+        if validate_id(id).is_err() || !seen.insert(id.to_owned()) {
+            return Err(StoreError::Corrupt(format!("invalid or duplicate batch ID at {offset}")));
+        }
+        let value_len = u32::from_be_bytes(take(bytes, &mut cursor, 4)?
+            .try_into().expect("4-byte batch value length")) as usize;
+        if value_len > MAX_DOCUMENT_BYTES
+            || !((op == PUT && value_len >= 5) || (op == DELETE && value_len == 0))
+        {
+            return Err(StoreError::Corrupt(format!("invalid batch operation/length at {offset}")));
+        }
+        let data = take(bytes, &mut cursor, value_len)?;
+        let value = if op == PUT {
+            Some(decode(data).map_err(|err| {
+                StoreError::Corrupt(format!("invalid batch RDB document at {offset}: {err}"))
+            })?)
+        } else {
+            None
+        };
+        changes.push((id.to_owned(), value));
+    }
+    if cursor != bytes.len() {
+        return Err(StoreError::Corrupt(format!("trailing batch bytes at {offset}")));
+    }
+    Ok(changes)
+}
+
 enum FrameRead {
     Complete { id: String, value: Option<Value>, length: u64 },
+    Batch { changes: Vec<(String, Option<Value>)>, length: u64 },
     Incomplete,
 }
 
@@ -593,15 +801,19 @@ fn read_frame(file: &mut File, offset: u64, end: u64) -> Result<FrameRead, Store
         return Err(StoreError::Corrupt(format!("unsupported segment version at {offset}")));
     }
     let op = header[5];
-    if (op != PUT && op != DELETE) || header[6..8] != [0, 0] {
+    if (op != PUT && op != DELETE && op != BATCH) || header[6..8] != [0, 0] {
         return Err(StoreError::Corrupt(format!("invalid operation or flags at {offset}")));
     }
     let id_len = u32::from_be_bytes(header[8..12].try_into().expect("fixed header")) as usize;
     let value_len = u32::from_be_bytes(header[12..16].try_into().expect("fixed header")) as usize;
-    if !(1..=MAX_ID_BYTES).contains(&id_len)
-        || value_len > MAX_DOCUMENT_BYTES
-        || (op == DELETE && value_len != 0)
-        || (op == PUT && value_len < 5)
+    if value_len > MAX_DOCUMENT_BYTES
+        || if op == BATCH {
+            id_len != 0 || value_len < 18
+        } else {
+            !(1..=MAX_ID_BYTES).contains(&id_len)
+                || (op == DELETE && value_len != 0)
+                || (op == PUT && value_len < 5)
+        }
     {
         return Err(StoreError::Corrupt(format!("invalid frame lengths at {offset}")));
     }
@@ -620,6 +832,12 @@ fn read_frame(file: &mut File, offset: u64, end: u64) -> Result<FrameRead, Store
     let actual_crc = crc32(&[&header[4..16], &id_bytes, &value_bytes]);
     if expected_crc != actual_crc {
         return Err(StoreError::Corrupt(format!("checksum mismatch at {offset}")));
+    }
+    if op == BATCH {
+        return Ok(FrameRead::Batch {
+            changes: decode_batch(&value_bytes, offset)?,
+            length,
+        });
     }
     let id = String::from_utf8(id_bytes)
         .map_err(|_| StoreError::Corrupt(format!("invalid UTF-8 document ID at {offset}")))?;
