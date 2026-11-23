@@ -269,7 +269,8 @@ public static class RystemRdbCodec
                 for (uint i=0; i<count; i++)
                 {
                     string key = r.Text();
-                    var value = ReadValue(ref r, depth + 1);
+                    // #78: an invalid field key must fail before allocating
+                    // or recursively traversing the associated child value.
                     if (fields.ContainsKey(key)) throw new ArgumentException("Duplicate RDB field");
                     // A canonical on-wire object uses UTF-8 byte sorting,
                     // not .NET's ordinal UTF-16 string comparison.
@@ -277,6 +278,7 @@ public static class RystemRdbCodec
                     if (previousKey is not null &&
                         previousKey.AsSpan().SequenceCompareTo(bytes) >= 0)
                         throw new ArgumentException("Noncanonical RDB object field order");
+                    var value = ReadValue(ref r, depth + 1);
                     fields.Add(key, value);
                     previousKey = bytes;
                 }

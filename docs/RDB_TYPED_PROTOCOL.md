@@ -33,6 +33,19 @@ locale collation: a BMP U+E000 key (`ee 80 80`) sorts **before** the astral
 U+1F600 key (`f0 9f 98 80`). Encoding continues to sort fields; this rule
 does not change the wire envelope or any tag/version numbers.
 
+**Fail-fast object-key validation (#78):** in each independent Rust, .NET
+and Node decoder, an object field's duplicate-key and strict UTF-8 order
+checks occur **before decoding its child value**. An already invalid key
+must never cause traversal or allocation of a potentially expensive nested
+value. In particular, a duplicate key followed by an invalid value tag
+is rejected as a duplicate key; a descending distinct key is rejected as
+noncanonical order. Nonadjacent duplicates (for example `a, c, a`)
+retain the **duplicate** classification. The Rust decoder checks its
+BTreeMap's greatest stored key rather than cloning every field name to
+track the preceding key. Valid RDB v1 bytes, their decoded values, the
+64 MiB input cap and the 262,144 aggregate node cap are unchanged;
+only error precedence for already-invalid frames is hardened.
+
 **Compatibility boundary:** earlier experimental source-only decoders accepted
 out-of-order *distinct* keys even though encoders always produced sorted keys
 and this protocol document prescribed canonical ordering. Those previously

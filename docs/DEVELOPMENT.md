@@ -95,6 +95,14 @@ cd src/libraries/typescript/rystemdb-client && npm test
 dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release
 ```
 
+**#78 object-key fail-fast regression:** `tdd_rdb_fail_fast_invalid_object_keys_before_child_decode`
+in `rdb_compat`, `TDD RED #78` in the Node `rdb.test.mjs` suite, and
+`Rystem .NET fail-fast RDB object keys` in `Program.cs` independently
+verify duplicate, descending and nonadjacent-duplicate key errors **before**
+a deliberately invalid child tag. The legacy implementation parsed the
+child first; after the GREEN fix all three decoders reject the key and
+avoid unnecessary child parsing, preserving existing golden v1 bytes.
+
 The C#/TypeScript RDB codecs can **encode and decode** nested binary objects but are not network database clients. [RDB_TYPED_PROTOCOL.md](RDB_TYPED_PROTOCOL.md) documents type mapping and binary compatibility. TDD race/UTF-8 defect #44 requires preserving the U+FEFF scalar.
 
 ## Real .NET and TypeScript localhost RPC client tests (on main)

@@ -224,19 +224,26 @@ impl<'a> Reader<'a> {
                     return Err(CodecError::UnexpectedEof);
                 }
                 let mut result = BTreeMap::new();
-                let mut previous_key: Option<String> = None;
                 for _ in 0..count {
                     let key = self.string()?;
-                    let val = self.value(depth + 1)?;
-                    // #65: A byte-identical logical object must have exactly
-                    // one canonical RDB representation. String's Rust Ord
-                    // compares UTF-8 bytes, not UTF-16 code units.
-                    if result.contains_key(&key) { return Err(CodecError::DuplicateKey); }
-                    if previous_key.as_ref().is_some_and(|previous| key < *previous) {
-                        return Err(CodecError::NonCanonicalKeyOrder);
+                    // #78: Validate the key BEFORE decoding the (potentially
+                    // huge) child value. Existing map keys are already in
+                    // strict UTF-8 byte order (#65). Borrow the greatest key
+                    // instead of cloning every field name just to remember it.
+                    if let Some((previous, _)) = result.last_key_value() {
+                        if key.as_str() <= previous.as_str() {
+                            // A duplicate can be nonadjacent: a, c, a must
+                            // remain DuplicateKey, not NonCanonicalKeyOrder.
+                            if key.as_str() == previous.as_str()
+                                || result.contains_key(key.as_str())
+                            {
+                                return Err(CodecError::DuplicateKey);
+                            }
+                            return Err(CodecError::NonCanonicalKeyOrder);
+                        }
                     }
-                    result.insert(key.clone(), val);
-                    previous_key = Some(key);
+                    let val = self.value(depth + 1)?;
+                    result.insert(key, val);
                 }
                 Ok(Value::Object(result))
             }

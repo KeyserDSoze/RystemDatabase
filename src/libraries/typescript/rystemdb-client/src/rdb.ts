@@ -227,7 +227,8 @@ function decodeValue(r: Reader, depth: number): RdbValue {
       let previousKey: Uint8Array | undefined;
       for(let i=0;i<count;i++) {
         const key = r.text();
-        const value = decodeValue(r,depth+1);
+        // #78: A duplicate/noncanonical key makes the whole RDB object
+        // invalid. Reject it BEFORE decoding any attacker-controlled child.
         if (values.has(key)) throw new Error("duplicate RDB field");
         // Compare UTF-8 bytes rather than JavaScript's UTF-16 ordering:
         // a noncanonical object must not have multiple valid wire encodings.
@@ -235,6 +236,7 @@ function decodeValue(r: Reader, depth: number): RdbValue {
         if (previousKey !== undefined && compareBytes(previousKey,bytes) >= 0) {
           throw new Error("noncanonical RDB object field order");
         }
+        const value = decodeValue(r,depth+1);
         values.set(key,value);
         previousKey = bytes;
       }
