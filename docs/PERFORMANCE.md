@@ -99,7 +99,7 @@ of documents. No better-than-competitor conclusion is justified.
 
 The Linux Rust CI job runs the **release** example with fixed small
 inputs (`64/128/128/42`) and validates its NDJSON using the
-dependency-free Python checker (including six negative schema test cases).
+dependency-free Python checker (six self-tests, including five negative schema cases).
 The raw `storage-benchmark.ndjson` file is uploaded as a short-retention
 `storage-benchmark-<commit SHA>` GitHub Actions artifact. These are
 per-commit, shared-runner diagnostic results; they are NOT controlled
