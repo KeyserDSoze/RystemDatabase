@@ -137,8 +137,8 @@ cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
   --fixture-output storage-fixture.ndjson
 
 # Native driver uses rusqlite to open a separate real SQLite WAL/FULL DB:
-cargo test --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
-cargo run --release --manifest-path benchmarks/sqlite-native/Cargo.toml -- \
+cargo test --locked --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
+cargo run --release --locked --manifest-path benchmarks/sqlite-native/Cargo.toml -- \
   --fixture storage-fixture.ndjson \
   --output sqlite-rust-benchmark.ndjson
 python3 scripts/check_native_sqlite_benchmark.py --self-test
@@ -174,6 +174,36 @@ decode RDB, but SQLite does not have Rystem's outer CRC-protected RYSF
 frame**. Production equivalence, query language and transaction
 isolation are not yet established. An early shared-runner sample is
 not a definitive ranking or per-request SLA.
+
+### First native-driver measurements — one shared Linux CI sample
+
+The **first passing Rust-native driver run**, at
+[CI #45229761224](https://github.com/KeyserDSoze/RystemDatabase/actions/runs/45229761224)
+(the test/driver commit `52a729dd`), used the same runner, exact
+RDB v1 fixture, seed=42, 64 initial documents, 128 operations and
+128-byte binary field. The bundled SQLite engine in the native
+`rusqlite` adapter was **3.50.2**, whereas the separate Python
+adapter used SQLite **3.46.1**. These engine version differences
+must not be hidden. Times below are **milliseconds per operation**;
+GET for SQLite native includes RDB typed decoding, but **not** the
+outer RYSF CRC validation.
+
+| Operation | Rystem Rust p50 | Native Rust SQLite p50 | Rystem p99 | Native SQLite p99 |
+| --- | ---: | ---: | ---: | ---: |
+| PUT + durable sync | 0.208721 | 0.306094 | 0.770337 | 0.468257 |
+| Warm GET (Rystem typed+RYSF CRC; SQLite typed RDB) | 0.007715 | 0.003546 | 0.008466 | 0.003877 |
+| UPDATE + durable sync | 0.205686 | 0.304621 | 0.580270 | 1.807417 |
+| Two-key atomic commit + sync | 0.237626 | 0.331010 | 0.406223 | 0.862466 |
+| DELETE + durable sync | 0.194345 | 0.306434 | 5.094861 | 1.203606 |
+
+This is **a single run** under shared GitHub Actions load. The
+Rystem DELETE p99 of 5.094861 ms, unlike most sample latencies,
+highlights contention and small p99 sample sizes. There were no
+production-path changes in this child, so these are not
+optimization-before/after measurements. The ordering of engines,
+different on-disk CRC integrity policy, checkpoint/index designs,
+and absence of dedicated-host repeats prevent any causal speedup or
+fastest-database conclusion.
 
 This is an **incremental part of #93, not closure of #93**. The parent
 still requires interleaved/randomized order, at least five independent

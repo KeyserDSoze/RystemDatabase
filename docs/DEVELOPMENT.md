@@ -21,10 +21,10 @@ Checks now cover the nested binary codec, persistent document CLI, append-only s
 ## Native Rust SQLite typed-decode comparator (#94)
 
 ```sh
-cargo test --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
-cargo clippy --manifest-path benchmarks/sqlite-native/Cargo.toml \
+cargo test --locked --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
+cargo clippy --locked --manifest-path benchmarks/sqlite-native/Cargo.toml \
   --all-targets -- -D warnings
-cargo run --release --manifest-path benchmarks/sqlite-native/Cargo.toml -- \
+cargo run --release --locked --manifest-path benchmarks/sqlite-native/Cargo.toml -- \
   --fixture storage-fixture.ndjson \
   --output sqlite-rust-benchmark.ndjson
 python3 scripts/check_native_sqlite_benchmark.py --self-test
