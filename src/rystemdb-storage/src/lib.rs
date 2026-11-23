@@ -67,6 +67,34 @@ struct Location {
     offset: u64,
 }
 
+/// Experimental immutable *read-only* view of the ID index at one point in
+/// time. It owns no writer lock and copies only ID -> segment/offset metadata.
+/// The underlying RYSF records remain on disk; each get verifies CRC+codec.
+///
+/// # Limits
+/// O(number of live IDs) metadata cloned per capture. No compaction is
+/// implemented, so historical frames remain intact during normal operation.
+/// This is NOT a transaction, MVCC manager or persisted snapshot handle:
+/// external filesystem changes or future segment deletion can invalidate
+/// old offsets. No cross-document atomic commit/write-conflict guarantees.
+#[derive(Debug)]
+pub struct DocumentSnapshot {
+    root: PathBuf,
+    entries: BTreeMap<String, Location>,
+}
+
+impl DocumentSnapshot {
+    /// Read the document version visible when this view was captured.
+    /// Absence, explicit RDB null and historical tombstones stay distinct.
+    pub fn get(&self, id: &str) -> Result<Option<Value>, StoreError> {
+        read_indexed(&self.root, &self.entries, id)
+    }
+
+    pub fn len(&self) -> usize { self.entries.len() }
+
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+}
+
 #[derive(Debug)]
 pub struct DocumentStore {
     root: PathBuf,
@@ -194,19 +222,21 @@ impl DocumentStore {
         Ok(())
     }
 
-    /// Read and verify the stored frame, including checksum and codec.
+    /// Read and verify the current document version (CRC + typed RDB codec).
     pub fn get(&self, id: &str) -> Result<Option<Value>, StoreError> {
-        let Some(location) = self.entries.get(id) else { return Ok(None); };
-        let mut file = File::open(segment_path(&self.root, location.segment))?;
-        let size = file.metadata()?.len();
-        match read_frame(&mut file, location.offset, size)? {
-            FrameRead::Complete { id: stored_id, value: Some(value), .. } if stored_id == id => {
-                Ok(Some(value))
-            }
-            _ => Err(StoreError::Corrupt(format!(
-                "indexed record {id} could not be verified at segment {} offset {}",
-                location.segment, location.offset
-            ))),
+        read_indexed(&self.root, &self.entries, id)
+    }
+
+    /// Capture a read-only, committed ID→offset view. Later PUT/DELETE
+    /// operations change only the writer's current index and append new
+    /// records; this snapshot continues to address the original versions.
+    ///
+    /// Snapshot capture clones O(number of live IDs) metadata, NOT payloads.
+    /// This is a limited local read-view primitive, not multi-document ACID.
+    pub fn snapshot(&self) -> DocumentSnapshot {
+        DocumentSnapshot {
+            root: self.root.clone(),
+            entries: self.entries.clone(),
         }
     }
 
@@ -300,6 +330,25 @@ impl DocumentStore {
     }
 }
 
+// Centralize the verified disk read shared by mutable current-index access
+// and read-only historical snapshots. Every read reopens the original frame
+// and revalidates ID, checksum and binary codec; snapshots never cache values.
+fn read_indexed(
+    root: &Path, entries: &BTreeMap<String, Location>, id: &str,
+) -> Result<Option<Value>, StoreError> {
+    let Some(location) = entries.get(id) else { return Ok(None); };
+    let mut file = File::open(segment_path(root, location.segment))?;
+    let size = file.metadata()?.len();
+    match read_frame(&mut file, location.offset, size)? {
+        FrameRead::Complete { id: stored_id, value: Some(value), .. } if stored_id == id => {
+            Ok(Some(value))
+        }
+        _ => Err(StoreError::Corrupt(format!(
+            "indexed record {id} could not be verified at segment {} offset {}",
+            location.segment, location.offset
+        ))),
+    }
+}
 
 #[cfg(feature = "fault-injection")]
 fn test_fault_is(point: &str) -> bool {

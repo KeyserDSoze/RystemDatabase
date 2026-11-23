@@ -16,7 +16,24 @@ cd npm/cli && npm test
 docker build -f docker/Dockerfile -t rystemdb:local .
 ```
 
-Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors. An advisory cross-process writer lock is provided; **no transactional secondary indexes, multi-document ACID, enforced reference integrity, or proven power-loss durability exist**. Each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
+Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors.
+
+## Immutable committed storage read-view regression (#79)
+
+```sh
+cargo test -p rystemdb-storage --locked --test snapshot_contract
+```
+
+`DocumentStore::snapshot()` captures a read-only copy of the committed
+ID→segment/offset index. Its `DocumentSnapshot::get` reads and CRC-verifies
+the historical RYSF frame, remaining stable across later PUT/DELETE,
+segment rollover, reader threads and writer close/reopen. Capture costs
+O(live document count) **metadata** and does not copy document payloads.
+This is a preliminary local read-view building block under #6, **not**
+multi-document ACID, concurrent write transactions, persisted snapshot IDs,
+version GC/compaction, isolation guarantees across hostile filesystem edits,
+or production-ready MVCC. Keep #6 OPEN.
+ An advisory cross-process writer lock is provided; **no transactional secondary indexes, multi-document ACID, enforced reference integrity, or proven power-loss durability exist**. Each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
 
 Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/release/rystemdb --help`. On Windows use `target\\release\\rystemdb.exe`.
 

@@ -35,7 +35,33 @@ The checksum is CRC-32/ISO-HDLC over bytes [4..16] followed by ID and payload; i
 4. On restart, replay every segment, creating the ID index from the latest PUT/DELETE for each ID. Last segment only: truncate a physically incomplete final frame. Complete corrupt frames and older truncated frames are **rejected**, not skipped.
 5. Sync failures make the current writer unusable until reopen; a failed write may have an uncertain outcome after a crash.
 
-Read/write/delete/rollover/restart, malformed input, corruption and truncated-tail behavior are covered by Cargo integration tests. The **feature-enabled real-process fault matrix** covers pre-append, torn synced payload, complete pre-sync write, post-sync/pre-index publication (PUT and DELETE), and post-directory-sync segment rotation. It is run on Linux, macOS and Windows.
+Read/write/delete/rollover/restart, malformed input, corruption and truncated-tail behavior are covered by Cargo integration tests.
+
+## Experimental immutable committed read views (#79; child of #6)
+
+The embedded Rust crate exposes `DocumentStore::snapshot()`, returning a
+`DocumentSnapshot` with `get(id)`, `len()` and `is_empty()`. Snapshot
+capture clones an **owned ID → segment/offset map** and database path, not
+document payload bytes: **O(number of live IDs)** metadata/time per capture.
+A snapshot reflects the set of acknowledged committed versions at capture
+time. Subsequent PUT/DELETE/new inserts only affect the live store index and
+append new RYSF frames; earlier versions remain readable by their original
+offsets, including across normal segment rotation and writer close/reopen.
+Each snapshot `get` opens the historical on-disk frame, verifies its CRC32,
+record ID and RDB codec, and returns **the original version**, never a stale
+unchecked in-memory value or the writer's newer version. Read-only snapshots
+do **not** acquire or hold the exclusive OS writer lock, and can be moved to a
+reader thread while a cooperative writer appends. The current design has no
+compaction and does not remove old committed frames.
+
+These views are **in-process experimental metadata**, not durable snapshot
+identifiers or multi-document transactions. External filesystem corruption,
+uncoordinated recovery, deleting old segments or any future compaction without
+reader-aware version retention can invalidate a view. There are **no**
+concurrent multi-writer transactions, write-write conflict detection,
+serializable isolation, phantom protection, WAL/commit epochs, MVCC GC, or
+replication. The parent [#6](https://github.com/KeyserDSoze/RystemDatabase/issues/6)
+remains OPEN. Regression: `cargo test -p rystemdb-storage --locked --test snapshot_contract`. The **feature-enabled real-process fault matrix** covers pre-append, torn synced payload, complete pre-sync write, post-sync/pre-index publication (PUT and DELETE), and post-directory-sync segment rotation. It is run on Linux, macOS and Windows.
 
 ## Crash semantics (test-only)
 
@@ -113,7 +139,7 @@ remains open for root-cause investigation.
 
 - **Advisory single-writer exclusion:** `rystemdb.writer.lock` is held with `File::try_lock` on the entire store lifetime, and released by the OS after normal or abrupt process exit. Two cooperative Rystem writers cannot open the same directory concurrently. Uncooperative tools or filesystems without reliable locks can still damage data.
 - Rebuild-from-log on every startup (not yet an index engine).
-- No MVCC, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
+- Only the experimental in-process read-view primitive described above; **no transactional MVCC engine**, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
 - Operating-system and hardware flush semantics may differ. Power-loss tests and Windows directory durability remain necessary.
 - CRC32 is not a cryptographic integrity guarantee; use trusted local storage.
 - No guarantee for hostile filesystem modifications or arbitrary bit rot, beyond fail-closed checks for recognized corruption.
