@@ -163,6 +163,70 @@ impl TrackedSnapshot {
     pub fn read_count(&self) -> usize { self.read_ids.len() }
 }
 
+/// Owned, in-process batch of final PUT/DELETE mutations over one tracked
+/// committed read view. PUT/DELETE are staged only: **no** disk append, sync,
+/// index change, or writer lock until DocumentStore::commit_staged_batch.
+///
+/// Repeating an ID replaces the previous staged operation (last write wins).
+/// A staged DELETE is not silently a no-op: when committed, the existing
+/// single-frame batch contract requires that ID to have existed in the
+/// captured snapshot. A staged value is returned by get before accessing the
+/// historical read view; such an overlay read does not add a point-read
+/// dependency, since all staged IDs are checked by the write-set OCC guard.
+///
+/// The final staged set is limited to 1,024 distinct IDs and must contain at
+/// least two mutations to commit. Dropping this object discards its changes.
+/// No transaction coordinator, general SQL serializability, phantom tracking,
+/// multi-frame commit, or read-your-own-writes outside this wrapper.
+#[derive(Debug)]
+pub struct StagedBatch {
+    view: TrackedSnapshot,
+    changes: BTreeMap<String, Option<Value>>,
+}
+
+impl StagedBatch {
+    /// Read the last staged PUT/DELETE if present, or a historical committed
+    /// point value (and automatically track that successful snapshot read).
+    pub fn get(&mut self, id: &str) -> Result<Option<Value>, StoreError> {
+        validate_id(id)?;
+        if let Some(value) = self.changes.get(id) {
+            return Ok(value.clone());
+        }
+        self.view.get(id)
+    }
+
+    /// Stage an owned RDB value. No persistence or encoding occurs now.
+    /// At capacity, updating an already staged key is still permitted.
+    pub fn put(&mut self, id: &str, value: Value) -> Result<(), StoreError> {
+        self.check_stage_id(id)?;
+        self.changes.insert(id.to_owned(), Some(value));
+        Ok(())
+    }
+
+    /// Stage a tombstone, overwriting any previous operation for this ID.
+    /// A DELETE of a key absent in the source snapshot will be rejected at
+    /// commit, even if the same draft previously staged a PUT of that key.
+    pub fn delete(&mut self, id: &str) -> Result<(), StoreError> {
+        self.check_stage_id(id)?;
+        self.changes.insert(id.to_owned(), None);
+        Ok(())
+    }
+
+    /// Number of distinct final staged mutations; maximum 1,024.
+    pub fn staged_count(&self) -> usize { self.changes.len() }
+
+    /// Number of distinct successful historical point reads, including absent.
+    pub fn read_count(&self) -> usize { self.view.read_count() }
+
+    fn check_stage_id(&self, id: &str) -> Result<(), StoreError> {
+        validate_id(id)?;
+        if self.changes.len() >= MAX_BATCH_OPERATIONS && !self.changes.contains_key(id) {
+            return Err(StoreError::InvalidBatch);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct DocumentStore {
     root: PathBuf,
@@ -359,6 +423,29 @@ impl DocumentStore {
     ) -> Result<(), StoreError> {
         let read_ids = tracked.read_ids.iter().map(String::as_str).collect::<Vec<_>>();
         self.commit_batch_checked(&tracked.snapshot, &read_ids, mutations)
+    }
+
+    /// Capture an immutable committed read view plus an owned, bounded
+    /// in-memory overlay for PUT/DELETE staging and read-your-own-writes.
+    /// No writer lock is held or disk data mutated until commit_staged_batch.
+    pub fn staged_batch(&self) -> StagedBatch {
+        StagedBatch {
+            view: self.tracked_snapshot(),
+            changes: BTreeMap::new(),
+        }
+    }
+
+    /// Commit all final staged changes as a single CRC-protected synced
+    /// RYSF BATCH frame with write-set and automatically tracked read-set
+    /// optimistic preconditions. Failed validation appends no bytes.
+    /// Reuses #82/#83/#84 logic and requires 2..=1,024 DISTINCT final
+    /// operations; there is no multi-frame transactional commit.
+    pub fn commit_staged_batch(&mut self, batch: &StagedBatch) -> Result<(), StoreError> {
+        let mutations = batch.changes.iter().map(|(id, value)| match value {
+            Some(value) => BatchMutation::Put { id: id.as_str(), value },
+            None => BatchMutation::Delete { id: id.as_str() },
+        }).collect::<Vec<_>>();
+        self.commit_tracked_batch(&batch.view, &mutations)
     }
 
     /// Insert an ABSENT document only if its last committed generation,
