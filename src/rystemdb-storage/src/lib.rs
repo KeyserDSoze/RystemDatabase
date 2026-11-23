@@ -676,9 +676,6 @@ fn frame(id: &str, encoded: Option<&[u8]>) -> Result<Vec<u8>, StoreError> {
     Ok(output)
 }
 
-/// A valid batch is decoded/CRC-verified as a unit before any member can
-/// become visible. Readers of one indexed ID reverify that entire frame.
-
 // #82: id_len=0 reserved in the outer RYSF header and the entire batch body
 // protected by the same CRC as legacy PUT/DELETE. Body format:
 // u16 BE count (2..=1024); each: u8 op, u16 BE id_len, UTF-8 id,
@@ -779,6 +776,8 @@ fn decode_batch(bytes: &[u8], offset: u64) -> Result<Vec<(String, Option<Value>)
     Ok(changes)
 }
 
+/// A valid batch is decoded/CRC-verified as a unit before any member can
+/// become visible. Readers of one indexed ID reverify that entire frame.
 enum FrameRead {
     Complete { id: String, value: Option<Value>, length: u64 },
     Batch { changes: Vec<(String, Option<Value>)>, length: u64 },

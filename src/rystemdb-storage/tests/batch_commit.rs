@@ -1,10 +1,11 @@
 //! #82 RED: one synced RYSF frame for an optimistic multi-key batch.
-///! Not a general SQL/serializable transaction engine.
+//! Not a general SQL/serializable transaction engine.
 use rystemdb_core::Value;
 use rystemdb_storage::{BatchMutation, DocumentStore, StoreError};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "fault-injection")]
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
