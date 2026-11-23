@@ -55,6 +55,25 @@ jobs:
         run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
       - name: Release build
         run: cargo build --release --locked -p rystemdb-cli
+      - name: Reproducible storage perf smoke and report schema (#88)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_storage_benchmark.py --self-test
+          cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
+            --records 64 --operations 128 --payload-bytes 128 --seed 42 \
+            --json-output storage-benchmark.ndjson
+          python3 scripts/check_storage_benchmark.py storage-benchmark.ndjson
+          # Correctness and report shape gate CI; elapsed milliseconds do not.
+      - name: Preserve raw per-commit storage benchmark sample (#88)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storage-benchmark-${{ github.sha }}
+          path: storage-benchmark.ndjson
+          if-no-files-found: error
+          retention-days: 14
   npm:
     name: npm installer + TypeScript live RPC (${{ matrix.os }})
     strategy:
