@@ -27,8 +27,9 @@ cargo test -p rystemdb-storage --locked --test snapshot_contract
 `DocumentStore::snapshot()` captures a read-only copy of the committed
 ID→segment/offset index. Its `DocumentSnapshot::get` reads and CRC-verifies
 the historical RYSF frame, remaining stable across later PUT/DELETE,
-segment rollover, reader threads and writer close/reopen. Capture costs
-O(live document count) **metadata** and does not copy document payloads.
+segment rollover, reader threads and writer close/reopen. Since #81,
+capture costs O(distinct IDs ever written) **metadata** for both the live
+document offsets and tombstone-generation ledger, and never copies payloads.
 This is a preliminary local read-view building block under #6, **not**
 multi-document ACID, concurrent write transactions, persisted snapshot IDs,
 version GC/compaction, isolation guarantees across hostile filesystem edits,
@@ -48,8 +49,25 @@ absent at capture time cannot be conditionally inserted or deleted.
 Tests prove no log growth on rejected writes, same-value overwrite conflict,
 DELETE/reinsert ABA for previously present keys, unchanged unrelated keys,
 and a version retained across segment rollover/reopen. This is per-key
-optimistic guard under one writer, not serializable/multi-key ACID or
-general absent-key ABA protection.
+optimistic guard under one writer, not serializable/multi-key ACID.
+The separate #81 absent-key API protects the single-key ABA case.
+
+## ABA-safe absent-key conditional insert regression (#81)
+
+```sh
+cargo test -p rystemdb-storage --locked --test conditional_insert
+```
+
+`DocumentStore::insert_if_unchanged` checks both live-key membership and
+the snapshot/current *last committed ID generation*, including tombstones.
+The generation is the offset of the latest acknowledged PUT or DELETE,
+rebuilt from the existing RYSF log during reopen. Rejected stale absent
+snapshots do not add bytes, including after `absent → PUT → DELETE`
+cycles and segment rollover; an unchanged tombstone snapshot can insert.
+Snapshots from a different path/root are rejected. This retains
+O(distinct historical IDs) in-memory metadata per store and per snapshot:
+**no compaction, bounded metadata footprint, cross-process transaction
+tokens or distributed ACID guarantees** are implied. Keep #6 open.
 
 An advisory cross-process writer lock is provided; **no transactional secondary indexes, multi-document ACID, enforced reference integrity, or proven power-loss durability exist**. Each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
 

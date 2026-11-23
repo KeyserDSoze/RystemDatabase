@@ -41,8 +41,11 @@ Read/write/delete/rollover/restart, malformed input, corruption and truncated-ta
 
 The embedded Rust crate exposes `DocumentStore::snapshot()`, returning a
 `DocumentSnapshot` with `get(id)`, `len()` and `is_empty()`. Snapshot
-capture clones an **owned ID → segment/offset map** and database path, not
-document payload bytes: **O(number of live IDs)** metadata/time per capture.
+capture clones an **owned live ID → segment/offset map**, a
+**last-committed ID → segment/offset generation ledger** (including tombstones)
+and database path, not document payload bytes. After #81 this is
+**O(number of distinct IDs ever written)** metadata/time per capture,
+not merely the number of live documents.
 A snapshot reflects the set of acknowledged committed versions at capture
 time. Subsequent PUT/DELETE/new inserts only affect the live store index and
 append new RYSF frames; earlier versions remain readable by their original
@@ -78,17 +81,41 @@ by the single exclusive writer. Unrelated keys may change without causing
 conflicts. Old snapshot reads still return their original verified versions,
 including across segment rollovers and writer close/reopen.
 
-**Absent-key conditional inserts/deletes are intentionally rejected with
-`Conflict`:** the live-index snapshots do not track tombstone generations,
-so `absent → PUT → DELETE → absent` cannot yet be distinguished from an
-untouched absent ID. Foreign-root checks compare path metadata, **not** a
-durable cryptographic database identity; path replacement, symlink aliases,
+**The existing-key replacement/deletion methods still require a key that
+was present in the snapshot**; absent-key inserts use the separate #81 API.
+Foreign-root checks compare path metadata, **not** a durable cryptographic
+database identity; path replacement, symlink aliases,
 uncoordinated recovery/compaction or external disk edits are not handled
 as transactional operations. No multi-key commit, serializable isolation,
 persistent version tokens, compaction retention, or remotely distributed
 concurrency control is implemented. Parent #6 remains open.
 
 Regression: `cargo test -p rystemdb-storage --locked --test conditional_update`.
+
+## ABA-safe absent-key conditional insert (#81; child of #6)
+
+`DocumentStore::insert_if_unchanged(&snapshot, id, &value)` allows a
+single-key INSERT only if **the key was absent in that snapshot, is still
+absent now, and its last-committed generation matches**. The writer maintains
+a second `ID → (segment,offset)` generation ledger for *every* ID seen
+in an acknowledged RYSF PUT or DELETE frame, keeping DELETE tombstones
+instead of discarding their offsets. It is rebuilt from existing binary
+segments on restart and extended only after successful append/fsync.
+Thus an initial absent snapshot is rejected if the key was inserted and
+deleted in the meantime (**ABA**), even after rollover and reopen.
+A snapshot captured after a tombstone can authorize an insert as long as
+the generation is unchanged. Current `get` and `len` still use only
+the live-documents index; old snapshot reads verify the historical CRC.
+
+This is intentionally a **memory-unbounded ledger of distinct IDs ever
+written**, plus O(distinct IDs) per captured snapshot; repeated generations
+of the same ID replace one map entry, but churn of new IDs grows retained
+metadata. No durable global epoch/DB identity, compaction protocol,
+version reclamation, concurrent multi-writer transactions or multi-key
+serializability is implemented. Future compaction must preserve this
+generation knowledge to avoid false successful inserts.
+
+Regression: `cargo test -p rystemdb-storage --locked --test conditional_insert`.
 
 The **feature-enabled real-process fault matrix** covers pre-append, torn synced payload, complete pre-sync write, post-sync/pre-index publication (PUT and DELETE), and post-directory-sync segment rotation. It is run on Linux, macOS and Windows.
 
@@ -168,7 +195,7 @@ remains open for root-cause investigation.
 
 - **Advisory single-writer exclusion:** `rystemdb.writer.lock` is held with `File::try_lock` on the entire store lifetime, and released by the OS after normal or abrupt process exit. Two cooperative Rystem writers cannot open the same directory concurrently. Uncooperative tools or filesystems without reliable locks can still damage data.
 - Rebuild-from-log on every startup (not yet an index engine).
-- Only experimental in-process read views and existing-key optimistic single-document conditional writes; **no transactional MVCC engine**, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
+- Only experimental in-process read views and single-key optimistic conditional PUT/DELETE/INSERT with retained tombstone generations; **no transactional MVCC engine**, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
 - Operating-system and hardware flush semantics may differ. Power-loss tests and Windows directory durability remain necessary.
 - CRC32 is not a cryptographic integrity guarantee; use trusted local storage.
 - No guarantee for hostile filesystem modifications or arbitrary bit rot, beyond fail-closed checks for recognized corruption.

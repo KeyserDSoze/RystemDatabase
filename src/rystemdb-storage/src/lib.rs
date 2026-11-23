@@ -79,8 +79,10 @@ struct Location {
 /// The underlying RYSF records remain on disk; each get verifies CRC+codec.
 ///
 /// # Limits
-/// O(number of live IDs) metadata cloned per capture. No compaction is
-/// implemented, so historical frames remain intact during normal operation.
+/// The live index contains current values; a second last-committed-version
+/// ledger also retains tombstone locations (#81), so snapshot capture clones
+/// O(distinct IDs ever seen) metadata. No compaction is implemented, so
+/// historical frames remain intact during normal operation.
 /// This is NOT a transaction, MVCC manager or persisted snapshot handle:
 /// external filesystem changes or future segment deletion can invalidate
 /// old offsets. No cross-document atomic commit/write-conflict guarantees.
@@ -88,6 +90,9 @@ struct Location {
 pub struct DocumentSnapshot {
     root: PathBuf,
     entries: BTreeMap<String, Location>,
+    // Latest acknowledged RYSF position for ALL known IDs, including
+    // tombstones. Replayed from the log; enables absent-key ABA checks.
+    versions: BTreeMap<String, Location>,
 }
 
 impl DocumentSnapshot {
@@ -109,6 +114,9 @@ pub struct DocumentStore {
     active_id: u64,
     segment_limit: u64,
     entries: BTreeMap<String, Location>,
+    // Never remove a tombstoned ID from this committed version ledger.
+    // Distinct historical IDs consume metadata until a future GC scheme.
+    versions: BTreeMap<String, Location>,
     poisoned: bool,
     // Last field drops last. The guard unlocks explicitly even on early
     // initialization errors; the OS is the fallback on abrupt process death.
@@ -175,6 +183,7 @@ impl DocumentStore {
         }
 
         let mut entries = BTreeMap::new();
+        let mut versions = BTreeMap::new();
         let active_id = *ids.last().expect("at least one segment exists");
         for id in &ids {
             let path = segment_path(&root, *id);
@@ -194,11 +203,16 @@ impl DocumentStore {
                         )));
                     }
                     FrameRead::Complete { id: document_id, value, length: frame_len } => {
+                        let location = Location { segment: *id, offset };
                         if value.is_some() {
-                            entries.insert(document_id, Location { segment: *id, offset });
+                            entries.insert(document_id.clone(), location);
                         } else {
                             entries.remove(&document_id);
                         }
+                        // #81: Every valid committed frame, including DELETE,
+                        // advances the last-known version. A tombstone is
+                        // not equivalent to a never-seen key for insert CAS.
+                        versions.insert(document_id, location);
                         offset = offset.checked_add(frame_len).ok_or_else(|| {
                             StoreError::Corrupt("segment offset overflow".into())
                         })?;
@@ -212,7 +226,7 @@ impl DocumentStore {
             .append(true)
             .open(segment_path(&root, active_id))?;
         Ok(Self {
-            root, active, active_id, segment_limit: limit, entries, poisoned: false,
+            root, active, active_id, segment_limit: limit, entries, versions, poisoned: false,
             _writer_lock: writer_lock,
         })
     }
@@ -226,6 +240,7 @@ impl DocumentStore {
         let frame = frame(id, Some(&encoded))?;
         let location = self.append(&frame)?;
         self.entries.insert(id.to_owned(), location);
+        self.versions.insert(id.to_owned(), location);
         Ok(())
     }
 
@@ -238,13 +253,41 @@ impl DocumentStore {
     /// operations change only the writer's current index and append new
     /// records; this snapshot continues to address the original versions.
     ///
-    /// Snapshot capture clones O(number of live IDs) metadata, NOT payloads.
+    /// Snapshot capture clones O(distinct IDs ever seen) metadata, NOT payloads.
     /// This is a limited local read-view primitive, not multi-document ACID.
     pub fn snapshot(&self) -> DocumentSnapshot {
         DocumentSnapshot {
             root: self.root.clone(),
             entries: self.entries.clone(),
+            versions: self.versions.clone(),
         }
+    }
+
+    /// Insert an ABSENT document only if its last committed generation,
+    /// including a previous DELETE tombstone, still matches a snapshot
+    /// captured from this database root.
+    ///
+    /// The snapshot must have observed the ID absent; a snapshot of a
+    /// present document is not an insert token, even after deletion.
+    /// A concurrent PUT or PUT+DELETE changes the last-known RYSF offset,
+    /// so both return Conflict without an append. Only the single writer
+    /// can commit, and its check+append are serialized by &mut self.
+    /// No global transactions or per-key version GC are implied.
+    pub fn insert_if_unchanged(
+        &mut self, snapshot: &DocumentSnapshot, id: &str, value: &Value,
+    ) -> Result<(), StoreError> {
+        self.ensure_healthy()?;
+        validate_id(id)?;
+        if self.root != snapshot.root {
+            return Err(StoreError::InvalidSnapshot);
+        }
+        if snapshot.entries.contains_key(id)
+            || self.entries.contains_key(id)
+            || snapshot.versions.get(id) != self.versions.get(id)
+        {
+            return Err(StoreError::Conflict);
+        }
+        self.put(id, value)
     }
 
     /// Replace an EXISTING committed document only if its version still
@@ -255,7 +298,8 @@ impl DocumentStore {
     ///
     /// The check and append are both performed under the same exclusive
     /// &mut self writer. This is a single-key optimistic guard, NOT a
-    /// multi-document transaction, MVCC GC, or an absent-key insert CAS.
+    /// multi-document transaction or MVCC GC. Absent-key CAS is a separate
+    /// `insert_if_unchanged` operation backed by tombstone generations.
     pub fn replace_if_unchanged(
         &mut self, snapshot: &DocumentSnapshot, id: &str, value: &Value,
     ) -> Result<(), StoreError> {
@@ -281,8 +325,9 @@ impl DocumentStore {
             return Ok(false);
         }
         let frame = frame(id, None)?;
-        self.append(&frame)?;
+        let location = self.append(&frame)?;
         self.entries.remove(id);
+        self.versions.insert(id.to_owned(), location);
         Ok(true)
     }
 
@@ -290,10 +335,9 @@ impl DocumentStore {
 
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
 
-    // A version comparison is only meaningful for keys that were PRESENT
-    // in the captured view, and only for the same path/root. Without a
-    // historical tombstone/version map an absent -> insert -> delete cycle
-    // is indistinguishable from an untouched absent key: fail closed.
+    // These replacement/deletion preconditions require a key PRESENT at
+    // snapshot time and the same root/path. Absent-key optimistic insertion
+    // has its own stricter check against the committed tombstone ledger.
     //
     // &mut self prevents another cooperative writer from interleaving between
     // this test and the append; no reads, record allocations or disk writes
