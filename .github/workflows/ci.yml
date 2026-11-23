@@ -75,6 +75,13 @@ jobs:
             --rystem-report storage-benchmark.ndjson \
             --output sqlite-benchmark.ndjson
           # Correctness and report shape gate CI; elapsed milliseconds do not.
+      - name: Native Rust SQLite fixture + typed read regression (RED #94)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolated cargo workspace: rusqlite/SQLite C are benchmark-only.
+          cargo test --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
       - name: Preserve raw per-commit storage benchmark sample (#88)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
