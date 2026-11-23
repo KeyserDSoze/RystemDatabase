@@ -18,6 +18,30 @@ docker build -f docker/Dockerfile -t rystemdb:local .
 
 Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors.
 
+## Reproducible performance telemetry (#88, child of #12)
+
+```sh
+cargo test -p rystemdb-storage --locked --test performance_contract
+cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
+  --records 128 --operations 256 --payload-bytes 128 --seed 42 \
+  --json-output storage-benchmark.ndjson
+python3 scripts/check_storage_benchmark.py --self-test
+python3 scripts/check_storage_benchmark.py storage-benchmark.ndjson
+```
+
+This opt-in **release** benchmark runs deterministic nested/nullable/typed
+RDB data in a fresh local store and checks operation correctness while
+recording point GET p50/p95/p99, missing GET, durable PUT/update/delete,
+snapshot cloning, two-key atomic batch and reopen/replay. API samples
+exclude result checking; separately reported wall throughput includes
+harness checking. The Linux CI gate checks report schema and uploads
+raw per-SHA NDJSON as an artifact but deliberately has **no ms
+pass/fail threshold**: shared GitHub runners are unsuitable for
+latency regression decisions. No other database is measured yet.
+See [Performance protocol and early sample](PERFORMANCE.md) and child
+comparison [#89](https://github.com/KeyserDSoze/RystemDatabase/issues/89).
+Parent #12 remains OPEN.
+
 ## Immutable committed storage read-view regression (#79)
 
 ```sh

@@ -6,6 +6,16 @@
 
 Rystem Database follows the top-level structure of [TemporalMark](https://github.com/KeyserDSoze/TemporalMark): `src/`, `tests/`, `docs/`, `adr/`, `scripts/`, `docker/`, `infra/`, `.github/`.
 
+## Performance measurement (experimental)
+
+The storage crate now has an opt-in deterministic release benchmark for
+PUT/GET/UPDATE/DELETE, snapshots, staged atomic batches and restart
+latency. CI publishes **raw per-commit p50/p95/p99 telemetry**, without
+brittle millisecond thresholds on shared runners. Follow
+[the performance methodology](docs/PERFORMANCE.md) for exact commands,
+early exploratory results and the pending fair PostgreSQL/SQLite/RocksDB/
+DuckDB comparison plan. No cross-engine speed ranking is validated.
+
 ## Build and test
 
 Requirements: Rust 1.89.0+, Cargo. Node.js 20+ for launcher tests; Docker optional.
