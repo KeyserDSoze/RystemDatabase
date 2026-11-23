@@ -255,3 +255,44 @@ fn tdd_oversized_pre_auth_hello_header_closes_without_waiting_for_body() {
     assert_eq!(send(&mut valid, Operation::Hello, 801, hello(&READ_TOKEN)).status, 0);
     assert_eq!(send(&mut valid, Operation::Ping, 802, vec![]).status, 0);
 }
+
+
+/// #73 RED: per-syscall socket timeouts are insufficient for a peer that
+/// trickles a header byte every <3s. The 3s budget must run from accept
+/// through the entire unauthenticated handshake, not restart on each read.
+#[test]
+fn tdd_absolute_pre_auth_deadline_closes_trickling_hello_header() {
+    let dir = Temp::new();
+    let policy = dir.dir().join("acl.txt");
+    credentials(&policy);
+    let server = Running::start(&dir.dir().join("store"), &policy);
+    let mut socket = server.connect();
+    socket.set_read_timeout(Some(Duration::from_millis(800))).unwrap();
+
+    let frame = rystemdb_protocol::encode(&Frame::request(
+        Operation::Hello, 901, hello(&READ_TOKEN)
+    )).unwrap();
+    // Valid header/body, deliberately never completed. Two successful
+    // partial writes occur 1.7s apart. Total time >3s; each individual
+    // read would still be waiting under the old rolling socket timeout.
+    socket.write_all(&frame[..1]).unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+    socket.write_all(&frame[1..2]).unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+
+    let mut first = [0u8; 1];
+    match socket.read(&mut first) {
+        Ok(0) => {}
+        Err(err) if matches!(err.kind(),
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted) => {}
+        Ok(n) => panic!("partial pre-auth HELLO unexpectedly returned {n} response bytes"),
+        Err(err) => panic!(
+            "drip-fed unauthenticated HELLO held a worker past 3s absolute deadline: {err:?}"
+        ),
+    }
+
+    // An abusive connection must not prevent subsequent valid sessions.
+    let mut valid = server.connect();
+    assert_eq!(send(&mut valid, Operation::Hello, 902, hello(&READ_TOKEN)).status, 0);
+    assert_eq!(send(&mut valid, Operation::Ping, 903, vec![]).status, 0);
+}
