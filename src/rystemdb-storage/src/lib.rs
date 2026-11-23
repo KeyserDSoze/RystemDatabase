@@ -845,7 +845,10 @@ fn read_indexed_many(
     // The outer/inner ordered maps group requested input slots by RYSF
     // (segment, frame offset). Live entries only; absent keys stay None.
     // All stored references borrow caller-provided ID slices.
-    let mut grouped: BTreeMap<u64, BTreeMap<u64, Vec<(usize, &str)>>> = BTreeMap::new();
+    // Named alias makes the physical grouping semantics explicit and keeps
+    // Clippy complexity manageable without changing any allocation or I/O.
+    type ReadGroups<'a> = BTreeMap<u64, BTreeMap<u64, Vec<(usize, &'a str)>>>;
+    let mut grouped: ReadGroups<'_> = BTreeMap::new();
     for (index, &id) in ids.iter().enumerate() {
         if let Some(location) = entries.get(id) {
             grouped.entry(location.segment).or_default()
