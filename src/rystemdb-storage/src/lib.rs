@@ -5,6 +5,8 @@
 //! index is rebuilt from the log; only an incomplete frame in the LAST segment
 //! can be truncated. Complete corrupt frames and damage to older segments fail
 //! closed. This is not yet a multi-process, multi-document ACID engine.
+pub mod performance;
+
 use rystemdb_core::{decode, encode, CodecError, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
