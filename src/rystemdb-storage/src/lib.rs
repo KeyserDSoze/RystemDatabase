@@ -22,6 +22,7 @@ const DELETE: u8 = 2;
 // Older binaries fail closed on this new opcode; legacy PUT/DELETE unchanged.
 const BATCH: u8 = 3;
 const MAX_BATCH_OPERATIONS: usize = 1024;
+const MAX_MULTI_GET_IDS: usize = 1024;
 const MAX_WATCHED_PREFIXES: usize = 64;
 const HEADER_SIZE: usize = 20;
 const MAX_ID_BYTES: usize = 1024;
@@ -35,6 +36,7 @@ pub enum StoreError {
     InvalidId,
     InvalidSegmentLimit,
     InvalidBatch,
+    InvalidReadBatch,
     Locked,
     /// A key changed since the supplied committed snapshot, or it was absent
     /// at capture time (absent-key ABA is intentionally unsupported).
@@ -53,6 +55,7 @@ impl fmt::Display for StoreError {
             StoreError::InvalidId => write!(f, "document ID must be 1..=1024 UTF-8 bytes"),
             StoreError::InvalidSegmentLimit => write!(f, "segment limit must be at least 64 bytes"),
             StoreError::InvalidBatch => write!(f, "batch must contain 2..=1024 unique, valid mutations"),
+            StoreError::InvalidReadBatch => write!(f, "multi-get accepts at most 1024 requested IDs"),
             StoreError::Locked => write!(f, "database directory is already open for writing"),
             StoreError::Conflict => write!(f, "document version conflict: snapshot is stale or key absent"),
             StoreError::InvalidSnapshot => write!(f, "snapshot belongs to a different database root"),
@@ -126,6 +129,16 @@ impl DocumentSnapshot {
     /// Absence, explicit RDB null and historical tombstones stay distinct.
     pub fn get(&self, id: &str) -> Result<Option<Value>, StoreError> {
         read_indexed(&self.root, &self.entries, id)
+    }
+
+    /// Read up to 1,024 IDs from this immutable historical view, in input
+    /// order. A single CRC-verified BATCH3 frame is decoded once even when
+    /// several requested documents share its (segment, offset) location.
+    /// Duplicates, misses and explicit RDB Null remain distinct. Every
+    /// input ID is validated before any file I/O; there is no persistent
+    /// descriptor cache and therefore no new stale/unlinked-file behavior.
+    pub fn get_many(&self, ids: &[&str]) -> Result<Vec<Option<Value>>, StoreError> {
+        read_indexed_many(&self.root, &self.entries, ids)
     }
 
     pub fn len(&self) -> usize { self.entries.len() }
@@ -445,6 +458,14 @@ impl DocumentStore {
     /// Read and verify the current document version (CRC + typed RDB codec).
     pub fn get(&self, id: &str) -> Result<Option<Value>, StoreError> {
         read_indexed(&self.root, &self.entries, id)
+    }
+
+    /// Return ordered, bounded, CRC-verified documents for up to 1,024
+    /// requested IDs. Shares segment opens/metadata and physical BATCH3
+    /// frame decodes within this call, with no persistent file handle cache.
+    /// Strictly validates every ID before I/O; missing keys return None.
+    pub fn get_many(&self, ids: &[&str]) -> Result<Vec<Option<Value>>, StoreError> {
+        read_indexed_many(&self.root, &self.entries, ids)
     }
 
     /// Capture a read-only, committed ID→offset view. Later PUT/DELETE
@@ -804,6 +825,75 @@ impl DocumentStore {
 // Centralize the verified disk read shared by mutable current-index access
 // and read-only historical snapshots. Every read reopens the original frame
 // and revalidates ID, checksum and binary codec; snapshots never cache values.
+/// #91: Group bounded indexed reads by physical segment/frame. Multiple
+/// distinct keys in one RYSF BATCH3 frame share the same Location and need
+/// only one open/stat/seek/frame checksum+full decode per call. A segment is
+/// never cached across requests, so unlink or corruption after one call is
+/// observed on the next one. Validation happens before any filesystem reads.
+fn read_indexed_many(
+    root: &Path,
+    entries: &BTreeMap<String, Location>,
+    ids: &[&str],
+) -> Result<Vec<Option<Value>>, StoreError> {
+    if ids.len() > MAX_MULTI_GET_IDS {
+        return Err(StoreError::InvalidReadBatch);
+    }
+    for &id in ids {
+        validate_id(id)?;
+    }
+
+    // The outer/inner ordered maps group requested input slots by RYSF
+    // (segment, frame offset). Live entries only; absent keys stay None.
+    // All stored references borrow caller-provided ID slices.
+    let mut grouped: BTreeMap<u64, BTreeMap<u64, Vec<(usize, &str)>>> = BTreeMap::new();
+    for (index, &id) in ids.iter().enumerate() {
+        if let Some(location) = entries.get(id) {
+            grouped.entry(location.segment).or_default()
+                .entry(location.offset).or_default().push((index, id));
+        }
+    }
+    let mut results = vec![None; ids.len()];
+    for (segment, frames) in grouped {
+        let mut file = File::open(segment_path(root, segment))?;
+        let size = file.metadata()?.len();
+        for (offset, requests) in frames {
+            // read_frame verifies the WHOLE CRC and nested RDB body before
+            // exposing any member of a checksummed BATCH3 frame.
+            match read_frame(&mut file, offset, size)? {
+                FrameRead::Complete { id: stored_id, value: Some(value), .. } => {
+                    for (index, requested_id) in requests {
+                        if requested_id != stored_id {
+                            return Err(StoreError::Corrupt(format!(
+                                "indexed multi-get record {requested_id} does not match frame at segment {segment} offset {offset}"
+                            )));
+                        }
+                        results[index] = Some(value.clone());
+                    }
+                }
+                FrameRead::Batch { changes, .. } => {
+                    let members: BTreeMap<&str, &Value> = changes.iter()
+                        .filter_map(|(id, value)| value.as_ref().map(|v| (id.as_str(), v)))
+                        .collect();
+                    for (index, requested_id) in requests {
+                        let value = members.get(requested_id).ok_or_else(|| {
+                            StoreError::Corrupt(format!(
+                                "indexed multi-get batch record {requested_id} missing or tombstoned at segment {segment} offset {offset}"
+                            ))
+                        })?;
+                        results[index] = Some((*value).clone());
+                    }
+                }
+                _ => {
+                    return Err(StoreError::Corrupt(format!(
+                        "indexed multi-get frame absent or incomplete at segment {segment} offset {offset}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(results)
+}
+
 fn read_indexed(
     root: &Path, entries: &BTreeMap<String, Location>, id: &str,
 ) -> Result<Option<Value>, StoreError> {
