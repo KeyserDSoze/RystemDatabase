@@ -117,6 +117,63 @@ Regression:
 `cargo test -p rystemdb-storage --locked --test batch_commit`
 (and with `--features fault-injection` for process-crash tests).
 
+## Owned staged batch and read-your-own-writes (#86; child of #6)
+
+`DocumentStore::staged_batch()` captures an immutable committed read view
+with automatic point-read tracking (from #84) and a **private in-memory**
+`BTreeMap<String, Option<Value>>` mutation overlay. `StagedBatch::get(id)`
+looks up the most recent staged PUT or DELETE first and returns its owned
+typed RDB value (or `None` after DELETE); otherwise it reads the
+historical snapshot and records that **successful** point-read dependency.
+Thus applications can read their pending changes, while other current
+writer changes are invisible to previously captured historical reads.
+Overlay reads are not added as distinct read dependencies: staged IDs
+already receive the existing optimistic write-set version check.
+
+```rust
+let mut draft = db.staged_batch();
+let current = draft.get("balance/a")?; // historical point get, automatically tracked
+draft.put("balance/a", Value::Integer(70))?;
+draft.put("balance/b", Value::Integer(80))?;
+assert_eq!(draft.get("balance/a")?, Some(Value::Integer(70)));
+// Nothing has changed on disk yet.
+db.commit_staged_batch(&draft)?; // one synced, checksummed batch
+```
+
+`put(id, value: Value)` transfers **ownership** of the value into staging;
+`delete(id)` stages a tombstone. Repeated operations on the same ID
+**coalesce to the final operation** (last-write-wins), bounded to at most
+1,024 **distinct** staged keys. Restaging an existing key at capacity is
+allowed, but staging a 1,025th new ID returns `StoreError::InvalidBatch`
+without modifying the overlay. Invalid UTF-8 byte-length/empty IDs
+return `InvalidId` before storage reads. Staging (or dropping the
+`StagedBatch`) never appends or syncs disk data, never publishes live
+index changes and holds no writer lock.
+
+`commit_staged_batch(&draft)` derives the final distinct mutations,
+then calls the **existing** `commit_tracked_batch` path: checked
+snapshot-time versions of the final writes AND automatically observed
+point reads (including absent→PUT→DELETE ABA) before a single
+CRC-checked, synced RYSF BATCH3 record is appended. On conflict, failure,
+or foreign-root view there is no write. **2..=1,024 distinct final
+mutations are required** because the same RYSF batch contract is reused.
+An explicit staged DELETE of a key absent in the source snapshot remains
+a `Conflict` at commit (even after staging PUT of that key): no
+implicit cancellation of the operation is assumed. Existing full
+batch-frame checksum/replay/crash tests remain the durability boundary.
+
+**Limits:** this is an embedded, source-only, bounded staged-batch
+primitive, not a general SQL/serializable transaction. It does not
+persist uncommitted state, support read-only transaction commit, record
+range/predicate reads, provide automatically staged writes to arbitrary
+store APIs, implement multi-frame atomicity or run multiple independent
+writers. Snapshots and their tombstone ledgers still clone/retain
+O(distinct historical IDs) metadata without compaction. Parent #6
+and storage durability parent #2 remain open.
+
+Regression: `cargo test -p rystemdb-storage --locked --test staged_batch`.
+The binary format is **unchanged** from the #82 BATCH opcode.
+
 ## Automatically tracked point reads for optimistic batch commits (#84; child of #6)
 
 `DocumentStore::tracked_snapshot()` returns an owned, read-only

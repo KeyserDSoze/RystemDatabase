@@ -244,3 +244,22 @@ fn tdd_staged_failed_crc_read_and_foreign_root_are_safe() {
         "a staged PUT should not read the corrupted historical record");
     assert_eq!(draft.read_count(), 0);
 }
+
+#[test]
+fn tdd_staged_delete_of_never_present_key_fails_closed_even_after_put() {
+    let root = TempDir::new();
+    let mut db = DocumentStore::open(root.path()).unwrap();
+    let mut draft = db.staged_batch();
+    draft.put("never", Value::Bool(true)).unwrap();
+    assert_eq!(draft.get("never").unwrap(), Some(Value::Bool(true)));
+    draft.delete("never").unwrap();
+    assert_eq!(draft.get("never").unwrap(), None);
+    draft.put("other", Value::Integer(42)).unwrap();
+    assert_eq!(draft.staged_count(), 2);
+    let before = log_bytes(root.path());
+    assert!(matches!(db.commit_staged_batch(&draft), Err(StoreError::Conflict)),
+        "DELETE requires key present in original committed snapshot");
+    assert_eq!(log_bytes(root.path()), before);
+    assert_eq!(db.get("never").unwrap(), None);
+    assert_eq!(db.get("other").unwrap(), None);
+}

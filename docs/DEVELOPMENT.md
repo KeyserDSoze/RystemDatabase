@@ -70,6 +70,29 @@ The body is <=64 MiB and holds 2..=1,024 mutations. This is not a
 general ACID transaction manager, serializable MVCC, replication, or
 multiframe commit. Keep parent #6/#2 OPEN.
 
+## Owned staged-batch read-your-own-writes regression (#86)
+
+```sh
+cargo test -p rystemdb-storage --locked --test staged_batch
+```
+
+`let mut draft = db.staged_batch()` captures a read-tracked committed
+snapshot with an owned `BTreeMap<ID, Option<Value>>` overlay. Use
+`draft.get(id)?` for a staged PUT value, staged DELETE absence, or a
+tracked historical point read; `draft.put(id, Value)` and
+`draft.delete(id)` stage changes without any write. Repeated staging
+of an ID coalesces to the final operation. The staged set is bounded to
+1,024 distinct IDs; a commit requires 2..=1,024 distinct final
+mutations. `db.commit_staged_batch(&draft)` reuses read-set OCC from #84
+and single-frame CRC/sync/replay from #82. These tests cover snapshot
+history, nested typed values/null, read/write conflicts, absent-key ABA
+after rollover/reopen, zero-byte failed/dropped batches, duplicate
+staging, invalid IDs, capacity and foreign-root failure.
+
+No durable uncommitted transaction state, multi-frame atomicity,
+read-only commit, SQL serializability, phantom detection, multiple
+independent writers or MVCC compaction/GC is promised. Keep #6/#2 open.
+
 ## Automatically tracked point-read snapshots (#84)
 
 ```sh
