@@ -70,6 +70,24 @@ The body is <=64 MiB and holds 2..=1,024 mutations. This is not a
 general ACID transaction manager, serializable MVCC, replication, or
 multiframe commit. Keep parent #6/#2 OPEN.
 
+## Atomic batch point-read-set validation (#83)
+
+```sh
+cargo test -p rystemdb-storage --locked --test batch_read_set
+```
+
+Use `DocumentStore::commit_batch_checked(&snapshot, &[read_id, ...],
+&mutations)` to additionally reject an atomic batch when any **explicitly
+declared** point-read dependency has changed since the snapshot, even if
+that ID is not among the written keys. This covers stale-value/same-value
+overwrites, absent→PUT→DELETE ABA and caller-declared read-only
+write-skew dependencies, with **no append on conflict**. IDs are unique,
+validated and bounded to 1,024; overlapping read/write keys are legal.
+The existing `commit_batch` delegates with an empty read set and keeps
+write-set-only checks. This is **not** automatic read tracing, phantom
+protection, transaction-level serializability or a multi-writer engine.
+No frame changes; #6 remains OPEN.
+
 ## ABA-safe absent-key conditional insert regression (#81)
 
 ```sh

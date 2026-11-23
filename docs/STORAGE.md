@@ -117,6 +117,39 @@ Regression:
 `cargo test -p rystemdb-storage --locked --test batch_commit`
 (and with `--features fault-injection` for process-crash tests).
 
+## Explicit point-read dependency validation for atomic batches (#83; child of #6)
+
+`DocumentStore::commit_batch_checked(&snapshot, &[read_id, ...],
+&[BatchMutation::Put/ Delete, ...])` is an **opt-in stricter**
+version of `commit_batch`: the caller explicitly supplies all point keys
+it read before deciding the mutations, including keys observed **absent**.
+The writer compares the last-committed (segment,frame offset) for every
+declared read dependency against the snapshot's generation ledger **before**
+encoding the batch or performing I/O. An intervening change (including
+same-value PUT or absent→PUT→DELETE) returns `StoreError::Conflict`
+with no appended bytes, and none of the batch's changes are published.
+Read and written IDs may overlap. Read dependencies can be unrelated
+to the keys being written.
+
+Up to **1,024 distinct read IDs** are supported. Duplicate read IDs
+return `StoreError::InvalidBatch`; invalid identifiers return `InvalidId`,
+and a snapshot from a foreign root returns `InvalidSnapshot`. A changed
+unlisted ID does not conflict. The older `commit_batch` retains its
+write-set-only validation by delegating to the same code with an empty
+read set. Validation is metadata-only: **no payload reads or decoding**
+until an actual storage operation is needed. Successful mutation batches
+retain the same one-frame CRC, sync, atomic replay and publication
+semantics defined above; **no wire/disk format change** is introduced.
+
+**Not general serializable isolation:** the caller must accurately list
+its point reads; `snapshot.get` does not automatically record them.
+There is no protection against range/phantom queries, predicate conflicts,
+multi-writer operation, durable transaction IDs or distributed commits.
+Read-set checks do not create a multi-frame transaction. Parent #6
+remains OPEN.
+
+Regression: `cargo test -p rystemdb-storage --locked --test batch_read_set`.
+
 ## Existing-key optimistic conditional writes (#80; child of #6)
 
 `DocumentStore::replace_if_unchanged(&snapshot, id, &value)` and
