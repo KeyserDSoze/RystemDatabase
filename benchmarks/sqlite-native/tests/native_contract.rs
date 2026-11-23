@@ -45,12 +45,14 @@ fn fixture_lines(seed:u64,records:usize,operations:usize,payload:usize)->Vec<Jso
             "id":format!("bench/{index:08}"),
             "value_hex":hex(&encode(&synthetic_document(seed^0xdeb6_5d53,records+i,payload)).unwrap())}));
     }
-    let null=hex(&encode(&Value::Null).unwrap());
+    // Do not name this variable `null`: json! parses that literal as
+    // JSON null rather than interpolating the Rust string expression.
+    let null_rdb_hex=hex(&encode(&Value::Null).unwrap());
     for i in 0..operations {
         rows.push(json!({"schema":1,"kind":"batch","sequence":i,
             "id_a":format!("batch/{i:08}/a"),
             "value_a_hex":hex(&encode(&Value::Integer(i as i64)).unwrap()),
-            "id_b":format!("batch/{i:08}/b"),"value_b_hex":null}));
+            "id_b":format!("batch/{i:08}/b"),"value_b_hex":null_rdb_hex}));
     }
     rows
 }
