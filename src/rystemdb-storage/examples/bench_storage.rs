@@ -192,9 +192,9 @@ fn run() -> Result<()> {
         },
         |_, _| true,
     )?);
-    for i in 0..cfg.operations {
-        if db.get(&batch_keys[i].0)? != Some(Value::Integer(i as i64))
-            || db.get(&batch_keys[i].1)? != Some(Value::Null)
+    for (i, (first, second)) in batch_keys.iter().enumerate() {
+        if db.get(first)? != Some(Value::Integer(i as i64))
+            || db.get(second)? != Some(Value::Null)
         {
             return Err(io::Error::other("atomic batch verification mismatch").into());
         }
