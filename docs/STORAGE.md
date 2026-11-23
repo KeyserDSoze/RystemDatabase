@@ -58,10 +58,39 @@ These views are **in-process experimental metadata**, not durable snapshot
 identifiers or multi-document transactions. External filesystem corruption,
 uncoordinated recovery, deleting old segments or any future compaction without
 reader-aware version retention can invalidate a view. There are **no**
-concurrent multi-writer transactions, write-write conflict detection,
+concurrent multi-writer transactions, multi-document write-write conflict detection,
 serializable isolation, phantom protection, WAL/commit epochs, MVCC GC, or
 replication. The parent [#6](https://github.com/KeyserDSoze/RystemDatabase/issues/6)
-remains OPEN. Regression: `cargo test -p rystemdb-storage --locked --test snapshot_contract`. The **feature-enabled real-process fault matrix** covers pre-append, torn synced payload, complete pre-sync write, post-sync/pre-index publication (PUT and DELETE), and post-directory-sync segment rotation. It is run on Linux, macOS and Windows.
+remains OPEN. Regression: `cargo test -p rystemdb-storage --locked --test snapshot_contract`.
+
+## Existing-key optimistic conditional writes (#80; child of #6)
+
+`DocumentStore::replace_if_unchanged(&snapshot, id, &value)` and
+`delete_if_unchanged(&snapshot, id)` provide **single-document optimistic
+concurrency checks** using the committed `(segment, offset)` recorded in
+`DocumentSnapshot`. The snapshot must refer to the same storage root/path,
+and the document must have **existed at capture time**. A changed, deleted
+or replaced version returns structured `StoreError::Conflict` without any
+append or index mutation; even an overwrite with identical value bytes has a
+new location and causes a conflict. A snapshot from a different root returns
+`StoreError::InvalidSnapshot`. An unchanged key can be updated or tombstoned
+by the single exclusive writer. Unrelated keys may change without causing
+conflicts. Old snapshot reads still return their original verified versions,
+including across segment rollovers and writer close/reopen.
+
+**Absent-key conditional inserts/deletes are intentionally rejected with
+`Conflict`:** the live-index snapshots do not track tombstone generations,
+so `absent → PUT → DELETE → absent` cannot yet be distinguished from an
+untouched absent ID. Foreign-root checks compare path metadata, **not** a
+durable cryptographic database identity; path replacement, symlink aliases,
+uncoordinated recovery/compaction or external disk edits are not handled
+as transactional operations. No multi-key commit, serializable isolation,
+persistent version tokens, compaction retention, or remotely distributed
+concurrency control is implemented. Parent #6 remains open.
+
+Regression: `cargo test -p rystemdb-storage --locked --test conditional_update`.
+
+The **feature-enabled real-process fault matrix** covers pre-append, torn synced payload, complete pre-sync write, post-sync/pre-index publication (PUT and DELETE), and post-directory-sync segment rotation. It is run on Linux, macOS and Windows.
 
 ## Crash semantics (test-only)
 
@@ -139,7 +168,7 @@ remains open for root-cause investigation.
 
 - **Advisory single-writer exclusion:** `rystemdb.writer.lock` is held with `File::try_lock` on the entire store lifetime, and released by the OS after normal or abrupt process exit. Two cooperative Rystem writers cannot open the same directory concurrently. Uncooperative tools or filesystems without reliable locks can still damage data.
 - Rebuild-from-log on every startup (not yet an index engine).
-- Only the experimental in-process read-view primitive described above; **no transactional MVCC engine**, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
+- Only experimental in-process read views and existing-key optimistic single-document conditional writes; **no transactional MVCC engine**, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
 - Operating-system and hardware flush semantics may differ. Power-loss tests and Windows directory durability remain necessary.
 - CRC32 is not a cryptographic integrity guarantee; use trusted local storage.
 - No guarantee for hostile filesystem modifications or arbitrary bit rot, beyond fail-closed checks for recognized corruption.

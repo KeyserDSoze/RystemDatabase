@@ -28,6 +28,11 @@ pub enum StoreError {
     InvalidId,
     InvalidSegmentLimit,
     Locked,
+    /// A key changed since the supplied committed snapshot, or it was absent
+    /// at capture time (absent-key ABA is intentionally unsupported).
+    Conflict,
+    /// The snapshot belongs to a different storage root/path.
+    InvalidSnapshot,
     Corrupt(String),
     Poisoned,
 }
@@ -40,6 +45,8 @@ impl fmt::Display for StoreError {
             StoreError::InvalidId => write!(f, "document ID must be 1..=1024 UTF-8 bytes"),
             StoreError::InvalidSegmentLimit => write!(f, "segment limit must be at least 64 bytes"),
             StoreError::Locked => write!(f, "database directory is already open for writing"),
+            StoreError::Conflict => write!(f, "document version conflict: snapshot is stale or key absent"),
+            StoreError::InvalidSnapshot => write!(f, "snapshot belongs to a different database root"),
             StoreError::Corrupt(message) => write!(f, "corrupt segment: {message}"),
             StoreError::Poisoned => write!(f, "store write failed; close and reopen to recover"),
         }
@@ -61,7 +68,7 @@ impl From<CodecError> for StoreError {
     fn from(error: CodecError) -> Self { Self::Codec(error) }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Location {
     segment: u64,
     offset: u64,
@@ -240,6 +247,32 @@ impl DocumentStore {
         }
     }
 
+    /// Replace an EXISTING committed document only if its version still
+    /// matches a snapshot captured from this database root. This compares the
+    /// actual append-only (segment,offset) version, not the document's bytes.
+    /// A stale, deleted or snapshot-absent key returns Conflict **before**
+    /// encoding or writing any data. A foreign root returns InvalidSnapshot.
+    ///
+    /// The check and append are both performed under the same exclusive
+    /// &mut self writer. This is a single-key optimistic guard, NOT a
+    /// multi-document transaction, MVCC GC, or an absent-key insert CAS.
+    pub fn replace_if_unchanged(
+        &mut self, snapshot: &DocumentSnapshot, id: &str, value: &Value,
+    ) -> Result<(), StoreError> {
+        self.check_unchanged_existing(snapshot, id)?;
+        self.put(id, value)
+    }
+
+    /// Append a durable tombstone only if this existing document is still
+    /// at the exact version observed by the supplied committed snapshot.
+    /// Conflicts are rejected before any disk I/O or index mutation.
+    pub fn delete_if_unchanged(
+        &mut self, snapshot: &DocumentSnapshot, id: &str,
+    ) -> Result<(), StoreError> {
+        self.check_unchanged_existing(snapshot, id)?;
+        self.delete(id).map(|_| ())
+    }
+
     /// Write an append-only tombstone; returns false without writing if absent.
     pub fn delete(&mut self, id: &str) -> Result<bool, StoreError> {
         self.ensure_healthy()?;
@@ -256,6 +289,31 @@ impl DocumentStore {
     pub fn len(&self) -> usize { self.entries.len() }
 
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    // A version comparison is only meaningful for keys that were PRESENT
+    // in the captured view, and only for the same path/root. Without a
+    // historical tombstone/version map an absent -> insert -> delete cycle
+    // is indistinguishable from an untouched absent key: fail closed.
+    //
+    // &mut self prevents another cooperative writer from interleaving between
+    // this test and the append; no reads, record allocations or disk writes
+    // are performed until the precondition has succeeded.
+    fn check_unchanged_existing(
+        &self, snapshot: &DocumentSnapshot, id: &str,
+    ) -> Result<(), StoreError> {
+        self.ensure_healthy()?;
+        validate_id(id)?;
+        if self.root != snapshot.root {
+            return Err(StoreError::InvalidSnapshot);
+        }
+        let Some(expected) = snapshot.entries.get(id) else {
+            return Err(StoreError::Conflict);
+        };
+        if self.entries.get(id) != Some(expected) {
+            return Err(StoreError::Conflict);
+        }
+        Ok(())
+    }
 
     // Treat a failed fsync/write/segment creation as an uncertain operation:
     // no further mutation, including an absent-id deletion, can succeed.

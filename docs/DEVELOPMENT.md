@@ -33,7 +33,25 @@ This is a preliminary local read-view building block under #6, **not**
 multi-document ACID, concurrent write transactions, persisted snapshot IDs,
 version GC/compaction, isolation guarantees across hostile filesystem edits,
 or production-ready MVCC. Keep #6 OPEN.
- An advisory cross-process writer lock is provided; **no transactional secondary indexes, multi-document ACID, enforced reference integrity, or proven power-loss durability exist**. Each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
+
+## Existing-key optimistic conflict regression (#80)
+
+```sh
+cargo test -p rystemdb-storage --locked --test conditional_update
+```
+
+`DocumentStore::replace_if_unchanged` and `delete_if_unchanged`
+compare the key's snapshot-time (segment,offset) with the current committed
+location and reject a stale version (`StoreError::Conflict`) **before
+writing**. A foreign-root snapshot returns `InvalidSnapshot`, and a key
+absent at capture time cannot be conditionally inserted or deleted.
+Tests prove no log growth on rejected writes, same-value overwrite conflict,
+DELETE/reinsert ABA for previously present keys, unchanged unrelated keys,
+and a version retained across segment rollover/reopen. This is per-key
+optimistic guard under one writer, not serializable/multi-key ACID or
+general absent-key ABA protection.
+
+An advisory cross-process writer lock is provided; **no transactional secondary indexes, multi-document ACID, enforced reference integrity, or proven power-loss durability exist**. Each future feature must introduce RED tests. The Windows/macOS/Linux checks cannot be replaced by Linux-only CI.
 
 Native build: `cargo build --release --locked -p rystemdb-cli`. Run `./target/release/rystemdb --help`. On Windows use `target\\release\\rystemdb.exe`.
 
