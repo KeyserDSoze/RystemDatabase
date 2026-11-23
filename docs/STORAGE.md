@@ -11,21 +11,39 @@ data/
   ...
 ```
 
-One file contains a sequence of variable-length frames, each storing one PUT of a typed nested binary document or a DELETE tombstone. Frame structure (network byte order for lengths and CRC):
+One file contains a sequence of variable-length frames, each storing one PUT of a typed nested binary document, a DELETE tombstone, or (#82, source `main` only) an atomic BATCH of 2..=1,024 such operations. Frame structure (network byte order for lengths and CRC):
 
 ```text
 magic[4] = "RYSF"
 format_version: u8 = 1
-operation: u8 = 1 (PUT) or 2 (DELETE)
+operation: u8 = 1 (PUT), 2 (DELETE), or 3 (BATCH; #82)
 reserved: u16 = 0
-id_length: u32
-value_length: u32
+id_length: u32 // 1..1024 for PUT/DELETE; ZERO for BATCH
+value_length: u32 // <=64 MiB
 crc32: u32
-id: [u8; id_length] // UTF-8, 1..1024 bytes
-value: [u8; value_length] // rystemdb-core codec v1, or empty for DELETE
+id: [u8; id_length] // UTF-8, 1..1024 bytes for PUT/DELETE; absent for BATCH
+value: [u8; value_length] // typed RDB, empty DELETE, or bounded BATCH body
 ```
 
 The checksum is CRC-32/ISO-HDLC over bytes [4..16] followed by ID and payload; it excludes magic and the checksum field. Values are binary typed documents, not JSON text. Different or absent nested fields remain supported because the codec is self-describing.
+
+**BATCH (#82) wire extension:** operation `3` reserves an empty outer ID
+(`id_length=0`). The checksummed `value` is a **single bounded binary
+batch body**: `count:u16 BE` (2..=1,024), followed by `count` members
+`op:u8 (1 PUT or 2 DELETE), id_length:u16 BE, id:UTF-8 bytes,
+value_length:u32 BE, value:RDB bytes` (DELETE must have zero value bytes).
+Every ID is nonempty, validated with the same storage ID rules, unique within
+the batch, and no trailing body bytes are permitted. **All** values are
+decoded and checked, with one outer CRC, before replay publishes **any**
+member. Total outer body <=64 MiB. At current head all batch member
+IDs share the same `(segment, frame offset)` version, and an indexed read
+rechecks the full frame checksum and decodes the matching document.
+
+**Compatibility:** old `PUT=1`/`DELETE=2` bytes remain unchanged and new
+source can replay legacy segments. Older `v0.1.2` binaries do **not**
+understand `BATCH=3` and must fail closed on these new records; **do not
+downgrade** a data directory written with `commit_batch`. A successful CI
+native/container workflow is not a newly published versioned release.
 
 ## Write, read and recovery contract
 
@@ -65,6 +83,39 @@ concurrent multi-writer transactions, multi-document write-write conflict detect
 serializable isolation, phantom protection, WAL/commit epochs, MVCC GC, or
 replication. The parent [#6](https://github.com/KeyserDSoze/RystemDatabase/issues/6)
 remains OPEN. Regression: `cargo test -p rystemdb-storage --locked --test snapshot_contract`.
+
+## Atomic single-frame multi-key commits (#82; child of #6)
+
+The embedded Rust crate now exposes
+`DocumentStore::commit_batch(&snapshot, &[BatchMutation::Put{id,value},
+BatchMutation::Delete{id}, ...])`. It checks *all affected IDs* against
+the snapshot's last-committed version ledger (including tombstones), verifies
+the key set is unique, requires DELETE to address a present document, and
+serializes all 2..=1,024 typed operations **before writing any bytes**.
+One checksummed BATCH record is appended and synced; only after successful
+fsync does the writer publish the entire new live index and tombstone
+generations. A conflicting/invalid/oversized batch returns an error with
+**no append or partially visible update**. Batch records may cross segment
+rollovers, while preexisting snapshots can still read old versions.
+
+Recovery never applies half of a batch: an incomplete final BATCH frame is
+truncated as a whole; a **complete, valid and synced** frame fully replays.
+A crash after the last write but before sync may replay the *entire* frame
+or none, as in the original single-operation durability contract. A complete
+frame with damaged CRC or invalid member data fails closed. Feature-gated
+real subprocess tests cover before append, torn tails, full pre-sync frames,
+and after sync/before publication. These are *process crash simulations*, not
+a proof of durability against sudden physical power loss.
+
+This is **not** general transaction isolation, multi-frame commit, a query
+transaction manager, multi-writer concurrency, distributed consensus, or
+a production ACID/MVCC claim. It allocates a bounded batch frame in memory,
+and can only group changes fitting in a single <=64 MiB payload. Old
+binaries cannot read the extended BATCH opcode.
+
+Regression:
+`cargo test -p rystemdb-storage --locked --test batch_commit`
+(and with `--features fault-injection` for process-crash tests).
 
 ## Existing-key optimistic conditional writes (#80; child of #6)
 
@@ -195,7 +246,7 @@ remains open for root-cause investigation.
 
 - **Advisory single-writer exclusion:** `rystemdb.writer.lock` is held with `File::try_lock` on the entire store lifetime, and released by the OS after normal or abrupt process exit. Two cooperative Rystem writers cannot open the same directory concurrently. Uncooperative tools or filesystems without reliable locks can still damage data.
 - Rebuild-from-log on every startup (not yet an index engine).
-- Only experimental in-process read views and single-key optimistic conditional PUT/DELETE/INSERT with retained tombstone generations; **no transactional MVCC engine**, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or transactions spanning documents.
+- Experimental in-process read views, single-key optimistic conditional PUT/DELETE/INSERT and bounded atomic single-frame batches with retained tombstone generations; **no general transactional MVCC engine**, SQL, analytics projections, foreign-key enforcement, compaction, backup/restore or unbounded/multi-frame transactions.
 - Operating-system and hardware flush semantics may differ. Power-loss tests and Windows directory durability remain necessary.
 - CRC32 is not a cryptographic integrity guarantee; use trusted local storage.
 - No guarantee for hostile filesystem modifications or arbitrary bit rot, beyond fail-closed checks for recognized corruption.

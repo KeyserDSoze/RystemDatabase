@@ -52,6 +52,24 @@ and a version retained across segment rollover/reopen. This is per-key
 optimistic guard under one writer, not serializable/multi-key ACID.
 The separate #81 absent-key API protects the single-key ABA case.
 
+## Bounded atomic multi-document batch commits (#82)
+
+```sh
+cargo test -p rystemdb-storage --locked --test batch_commit
+cargo test -p rystemdb-storage --locked --features fault-injection --test batch_commit -- --test-threads=1
+```
+
+`DocumentStore::commit_batch(&snapshot, &[BatchMutation::Put/ Delete])`
+prevalidates unique keys and snapshot-time versions before writing any
+bytes, then durably publishes all changes as **one CRC-verified RYSF v1
+BATCH opcode 3**. Real subprocess crash tests verify incomplete final
+batches replay none, synced batches replay all, and complete unsynced
+batches can only be all-or-none. Old PUT/DELETE on-disk bytes stay
+compatible; older binaries **cannot read** directories with BATCH frames.
+The body is <=64 MiB and holds 2..=1,024 mutations. This is not a
+general ACID transaction manager, serializable MVCC, replication, or
+multiframe commit. Keep parent #6/#2 OPEN.
+
 ## ABA-safe absent-key conditional insert regression (#81)
 
 ```sh
