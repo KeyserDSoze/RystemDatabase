@@ -9,6 +9,9 @@ import { encodeRdb } from "../src/rdb.ts";
 // The separate live/mTLS tests continue to use a real Rust subprocess.
 class FakeSocket extends EventEmitter {
   destroyed = false;
+  // Node's actual net.Socket/TLSSocket always exposes writableLength.
+  // This receive-only fake flushes its synthetic writes immediately.
+  writableLength = 0;
   sent = [];
   setNoDelay() { return this; }
   setTimeout() { return this; }
