@@ -154,8 +154,10 @@ index changes and holds no writer lock.
 then calls the **existing** `commit_tracked_batch` path: checked
 snapshot-time versions of the final writes AND automatically observed
 point reads (including absent→PUT→DELETE ABA) before a single
-CRC-checked, synced RYSF BATCH3 record is appended. On conflict, failure,
-or foreign-root view there is no write. **2..=1,024 distinct final
+CRC-checked, synced RYSF BATCH3 record is appended. On a **validation** conflict, malformed batch or foreign-root
+view, nothing is appended. By contrast a failed write or fsync may
+have an **uncertain** outcome and poisons the writer until close/replay,
+per the existing storage contract. **2..=1,024 distinct final
 mutations are required** because the same RYSF batch contract is reused.
 An explicit staged DELETE of a key absent in the source snapshot remains
 a `Conflict` at commit (even after staging PUT of that key): no
