@@ -70,6 +70,27 @@ The body is <=64 MiB and holds 2..=1,024 mutations. This is not a
 general ACID transaction manager, serializable MVCC, replication, or
 multiframe commit. Keep parent #6/#2 OPEN.
 
+## Staged prefix-scan phantom conflict regression (#87)
+
+```sh
+cargo test -p rystemdb-storage --locked --test staged_prefix_scan
+```
+
+`draft.scan_prefix("orders/")?` returns a sorted union of historical
+committed snapshot-time live IDs and final staged PUT/DELETE operations.
+Successful scans watch literal prefixes as optimistic predicates; a
+later insert, overwrite (even with identical typed payload), DELETE
+or insert→DELETE ABA of any matching ID conflicts **before the batch
+appends**. An unchanged watched prefix tolerates unrelated writes;
+replay/rollover and read-your-own-writes use the same existing #86
+code path. Strict bounds: 64 distinct nonempty observed prefixes
+and 1,024 candidate keys per scan; failed, overlimit and corrupted
+reads do not register watches.
+
+No arbitrary SQL predicates/ranges, cross-key read joins, serializable
+transaction isolation, multiframe atomicity, unbounded scan response,
+multi-writer transaction manager or compaction/GC. Keep #6/#2/#7 OPEN.
+
 ## Owned staged-batch read-your-own-writes regression (#86)
 
 ```sh

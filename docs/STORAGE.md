@@ -117,6 +117,61 @@ Regression:
 `cargo test -p rystemdb-storage --locked --test batch_commit`
 (and with `--features fault-injection` for process-crash tests).
 
+## Prefix-scan phantom detection for staged batches (#87; child of #6)
+
+The embedded `StagedBatch` can now scan committed snapshot-time live
+document IDs using a **literal UTF-8 ID prefix**, merged with its pending
+PUT/DELETE overlay, and return **lexicographically sorted** `(ID, Value)`
+pairs. The operation `draft.scan_prefix("orders/")?` includes staged
+new/replaced values, excludes staged DELETEs, and reads untouched
+documents by their CRC-verified historical RYSF offsets. An explicit
+`Value::Null` stays present rather than collapsing into absence.
+
+A **successful** scan registers the literal prefix as a watched
+*predicate*, even if it returned an empty result. Before the normal
+`commit_staged_batch` one-frame append, the exclusive writer checks
+**both the snapshot and current last-committed version maps** for every
+ID beginning with any watched prefix. A changed old key, same-payload
+overwrite, deletion, newly inserted ID or
+`absent → PUT → DELETE → absent` tombstone ABA is a `Conflict` and
+rejects the whole staged batch **before appending bytes**. Keys outside
+all watched prefixes still may change without false conflict. This
+preflight runs under the existing single-writer `&mut self` guard,
+in the same critical section as the already-implemented point-read and
+written-key optimistic checks and synced one-frame commit.
+
+```rust
+let mut draft = db.staged_batch();
+let orders = draft.scan_prefix("orders/")?; // watch even an empty result
+draft.put("audit/checked", Value::Integer(orders.len() as i64))?;
+draft.put("audit/complete", Value::Bool(true))?;
+db.commit_staged_batch(&draft)?; // abort if an order ID generation changed
+```
+
+The API has **strict bounds**: 64 distinct watched nonempty prefixes,
+1,024 distinct candidate IDs from the union of historical live IDs and
+staged IDs per scan. Invalid prefixes (`InvalidId`) or over-limit
+scans (`InvalidBatch`) fail before any RYSF read; checksum/I/O failure
+returns an error and does not register the attempted watched prefix.
+Repeated scans of a previously watched prefix do not count twice.
+Each scan materializes at most 1,024 typed values; historical tombstone
+metadata remains O(distinct IDs ever committed) until compaction/GC
+is separately implemented. Prefix checks use BTreeMap ordered ranges,
+not file scans. An actual append/fsync failure retains the previously
+documented uncertain recovery semantics: only **preflight** rejection
+guarantees zero appended bytes.
+
+This is **optimistic validation of literal ID prefixes only**, not
+arbitrary SQL predicates, join/range queries, predicate locks,
+serializable SQL transactions, multi-frame or distributed ACID,
+automatic secondary indexing or transactional compaction. The legacy
+`DocumentStore::get`, immutable `DocumentSnapshot`,
+`commit_batch` and `commit_batch_checked` APIs are unchanged.
+The existing RYSF BATCH opcode and binary format are **unchanged**.
+Parent #6/#2 and SQL query feature #7 remain OPEN.
+
+Regression: `cargo test -p rystemdb-storage --locked --test staged_prefix_scan`.
+
 ## Owned staged batch and read-your-own-writes (#86; child of #6)
 
 `DocumentStore::staged_batch()` captures an immutable committed read view
