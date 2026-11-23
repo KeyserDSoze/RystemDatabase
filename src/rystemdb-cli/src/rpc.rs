@@ -247,7 +247,7 @@ fn handle_client(stream: TcpStream, accepted_at: Instant, db: &Mutex<DocumentSto
     policy: Option<&AuthPolicy>, tls: Option<&Arc<rustls::ServerConfig>>,
     mtls_rules: Option<&[(String, Grant)]>)
 {
-    let Ok(stream) = DeadlineSocket::new(stream, accepted_at) else {
+    let Ok(mut stream) = DeadlineSocket::new(stream, accepted_at) else {
         return;
     };
     if let Some(config) = tls {
