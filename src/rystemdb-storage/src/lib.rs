@@ -20,6 +20,7 @@ const DELETE: u8 = 2;
 // Older binaries fail closed on this new opcode; legacy PUT/DELETE unchanged.
 const BATCH: u8 = 3;
 const MAX_BATCH_OPERATIONS: usize = 1024;
+const MAX_WATCHED_PREFIXES: usize = 64;
 const HEADER_SIZE: usize = 20;
 const MAX_ID_BYTES: usize = 1024;
 const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
@@ -182,6 +183,9 @@ impl TrackedSnapshot {
 pub struct StagedBatch {
     view: TrackedSnapshot,
     changes: BTreeMap<String, Option<Value>>,
+    // Successful prefix scans are optimistic predicate dependencies, even
+    // when they returned no live documents. Historical tombstones matter.
+    watched_prefixes: BTreeSet<String>,
 }
 
 impl StagedBatch {
@@ -194,6 +198,62 @@ impl StagedBatch {
         }
         self.view.get(id)
     }
+
+    /// Scan snapshot-time live IDs with the specified nonempty UTF-8 prefix
+    /// merged with this draft's final PUT/DELETE overlay. Results are sorted
+    /// by document ID; staged values replace historical ones, and staged
+    /// DELETEs hide them. A successful scan records this prefix as a
+    /// predicate dependency, including an EMPTY result set.
+    ///
+    /// At most 64 DISTINCT watched prefixes and 1,024 DISTINCT candidate IDs
+    /// per scan. Either limit and any failed CRC/codec read reject without
+    /// recording this new prefix. This protects only literal ID prefixes,
+    /// not general SQL/range predicates or serializable isolation.
+    pub fn scan_prefix(&mut self, prefix: &str) -> Result<Vec<(String, Value)>, StoreError> {
+        validate_id(prefix)?;
+        if self.watched_prefixes.len() >= MAX_WATCHED_PREFIXES
+            && !self.watched_prefixes.contains(prefix)
+        {
+            return Err(StoreError::InvalidBatch);
+        }
+
+        // Form the candidate key union before reading any RYSF data, so an
+        // overlimit scan cannot decode and materialize an unbounded prefix.
+        // BTreeMap prefix ranges avoid scanning unrelated document IDs.
+        let mut keys = BTreeSet::new();
+        for (id, _) in self.view.snapshot.entries.range(prefix.to_owned()..)
+            .take_while(|(id, _)| id.starts_with(prefix))
+        {
+            keys.insert(id.clone());
+            if keys.len() > MAX_BATCH_OPERATIONS {
+                return Err(StoreError::InvalidBatch);
+            }
+        }
+        for (id, _) in self.changes.range(prefix.to_owned()..)
+            .take_while(|(id, _)| id.starts_with(prefix))
+        {
+            keys.insert(id.clone());
+            if keys.len() > MAX_BATCH_OPERATIONS {
+                return Err(StoreError::InvalidBatch);
+            }
+        }
+
+        let mut results = Vec::with_capacity(keys.len());
+        for id in keys {
+            let value = match self.changes.get(&id) {
+                Some(value) => value.clone(),
+                None => self.view.snapshot.get(&id)?,
+            };
+            if let Some(value) = value {
+                results.push((id, value));
+            }
+        }
+        self.watched_prefixes.insert(prefix.to_owned());
+        Ok(results)
+    }
+
+    /// Number of distinct successfully scanned ID prefixes, max 64.
+    pub fn watched_prefix_count(&self) -> usize { self.watched_prefixes.len() }
 
     /// Stage an owned RDB value. No persistence or encoding occurs now.
     /// At capacity, updating an already staged key is still permitted.
@@ -432,6 +492,7 @@ impl DocumentStore {
         StagedBatch {
             view: self.tracked_snapshot(),
             changes: BTreeMap::new(),
+            watched_prefixes: BTreeSet::new(),
         }
     }
 
@@ -441,6 +502,34 @@ impl DocumentStore {
     /// Reuses #82/#83/#84 logic and requires 2..=1,024 DISTINCT final
     /// operations; there is no multi-frame transactional commit.
     pub fn commit_staged_batch(&mut self, batch: &StagedBatch) -> Result<(), StoreError> {
+        self.ensure_healthy()?;
+        if self.root != batch.view.snapshot.root {
+            return Err(StoreError::InvalidSnapshot);
+        }
+
+        // Both directions matter: the snapshot may contain a now-modified
+        // document, OR the current ledger may contain a new/tombstoned ID
+        // that was absent from the snapshot. Compare committed versions,
+        // not merely the set of live IDs, to reject insert->delete ABA.
+        // This check and the existing one-frame batch commit are serialized
+        // by the same &mut self exclusive single writer.
+        for prefix in &batch.watched_prefixes {
+            for (id, expected) in batch.view.snapshot.versions.range(prefix.to_owned()..)
+                .take_while(|(id, _)| id.starts_with(prefix))
+            {
+                if self.versions.get(id) != Some(expected) {
+                    return Err(StoreError::Conflict);
+                }
+            }
+            for (id, current) in self.versions.range(prefix.to_owned()..)
+                .take_while(|(id, _)| id.starts_with(prefix))
+            {
+                if batch.view.snapshot.versions.get(id) != Some(current) {
+                    return Err(StoreError::Conflict);
+                }
+            }
+        }
+
         let mutations = batch.changes.iter().map(|(id, value)| match value {
             Some(value) => BatchMutation::Put { id: id.as_str(), value },
             None => BatchMutation::Delete { id: id.as_str() },
