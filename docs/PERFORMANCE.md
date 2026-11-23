@@ -199,6 +199,39 @@ synchronizes the WAL at every commit; see
 [SQLite PRAGMA synchronous](https://sqlite.org/pragma.html) and
 [SQLite WAL](https://sqlite.org/wal.html).
 
+### First verified per-engine measurements, not a winner ranking
+
+One successful **Linux Rust benchmark job** in
+[GitHub CI #45223122440](https://github.com/KeyserDSoze/RystemDatabase/actions/runs/45223122440)
+on source SHA `489c9b8f11a49151795abf7a196adb804a97c386`
+ran both engines on the **same shared runner**, in separate phases,
+with `records=64`, `operations=128`, `payload_bytes=128`
+and `seed=42`. Real SQLite library **3.46.1** via Python **3.14.4**
+on Linux x86_64, WAL+FULL confirmed, using the Rust-exported binary
+RDB fixture. The source-code/fixture and raw per-SHA NDJSON artifact
+are in the linked workflow. These are **single-run exploratory
+observations** with material process/runtime and decode differences:
+
+| Operation | Rystem p50 (ms) | SQLite p50 (ms) | Rystem p99 (ms) | SQLite p99 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Durable insert | 0.342996 | 0.503619 | 0.670661 | 1.793067 |
+| Warm point lookup (typed+CRC vs raw BLOB) | 0.004021 | 0.002591 | 0.004678 | 0.005962 |
+| Missing-key index lookup | 0.000073 | 0.002327 | 0.000162 | 0.003433 |
+| Durable update | 0.319430 | 0.506398 | 0.604394 | 7.469176 |
+| Durable two-key batch | 0.332161 | 0.487576 | 0.823585 | 0.785017 |
+| Durable delete | 0.342314 | 0.459447 | 18.247031 | 18.689259 |
+
+Note the very large, shared-runner **delete p99 tails** in both
+engines. They illustrate why a statistically meaningful p99 needs
+far more observations under controlled CPU/I/O conditions. The Rystem
+missing-key fast path does not read from disk; SQLite executes a SQL
+lookup. The two-engine get-hit numbers **do not offer semantic parity**,
+as documented above. One Rystem replay/open was **0.957535 ms**;
+one SQLite connection reopen was **0.099764 ms**—not equivalent work,
+and excluded from the comparison table. Do **not** infer an overall
+database-speed winner, a general percentage improvement, or stable
+service latency from these samples.
+
 **Fair comparison remains open under #89:** replace Python-vs-Rust
 runtime differences with native equivalent adapters, compare actual
 RDB typed decode and checksum policy, use dedicated identical host
