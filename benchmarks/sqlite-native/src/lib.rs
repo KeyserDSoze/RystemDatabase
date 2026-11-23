@@ -232,7 +232,7 @@ impl NativeSqlite {
             conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
         let synchronous: i64 =
             conn.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
-        if journal_mode.to_ascii_lowercase() != "wal" || synchronous != 2 {
+        if !journal_mode.eq_ignore_ascii_case("wal") || synchronous != 2 {
             return Err(invalid("SQLite WAL/FULL durability was not applied").into());
         }
         Ok(Self { conn, journal_mode, synchronous })
