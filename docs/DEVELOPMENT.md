@@ -60,7 +60,23 @@ header writes reproduce the old rolling per-read timeout flaw; the server
 must terminate the unauthenticated connection within the original 3-second
 absolute accept-to-HELLO budget. The deadline applies to queued sockets
 and the TCP transport under rustls as well, and is cleared only after a
-successful HELLO response. All post-authenticated RPC limits are unchanged.
+successful HELLO response. All post-authenticated RPC limits were unchanged
+by #73.
+
+## Absolute authenticated frame-ingress deadline regression (#77)
+
+`cargo test -p rystemdb-cli --locked --test rpc_auth tdd_absolute_post_hello_plaintext_frame_receive_deadline`
+and
+`cargo test -p rystemdb-cli --locked --test rpc_tls tdd_absolute_post_hello_tls13_frame_receive_deadline`
+use real Rust CLI subprocesses: complete authorized HELLO, then send only
+two bytes of the next 24-byte RSWP header in 1.7-second-spaced writes.
+Prior per-read 3s socket timeouts allow the worker to remain occupied after
+3.4s. The server must disconnect within one 3-second total receive budget
+for that complete frame, in plaintext and inside verified TLS1.3 alike.
+The budget resets for each new frame, not the lifetime of the connection;
+it ends immediately after the frame arrives and does not include backend
+fsync, locking, encoding, or reply transmission. Pre-auth #73 remains
+independent and unchanged. No external RPC bind or production-ready claim.
 
 ## Rust RPC client TDD (source on main)
 

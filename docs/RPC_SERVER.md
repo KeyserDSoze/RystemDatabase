@@ -38,20 +38,32 @@ including time waiting in the 32-socket queue. Every underlying socket
 read/write checks the remaining budget, even when the RSWP header/body is
 sent in tiny fragments or rustls is processing a TLS1.3/mTLS handshake.
 Sending another byte does **not** reset the deadline. The budget ends only
-after a successful HELLO response has been flushed; authenticated connections
-then retain the existing 3-second **per-I/O** timeouts, 128-request limit
-and unchanged 16 MiB CRUD frame limit. Rejected/truncated sessions close
-without storage access. Real subprocess regression tests cover a drip-fed
-RSWP HELLO and partial TLS record header.
+after a successful HELLO response has been flushed. Rejected/truncated
+sessions close without storage access. Real subprocess regression tests cover
+a drip-fed RSWP HELLO and partial TLS record header.
+
+**Post-HELLO absolute frame-ingress deadline (#77):** each subsequent
+authenticated RSWP request has its own **3-second wall-clock receive budget**
+starting immediately before reading that frame's 24-byte header. The budget
+covers the complete header and up to 16 MiB of body bytes, including repeated
+TCP reads and TLS1.3 record parsing. Trickle-fed clients are disconnected
+when this deadline expires; successful complete frames reset the budget for
+the *next* request, not for the whole connection. The ingress deadline is
+cleared before document decoding, storage locking/fsync, or response writing:
+those operations retain the existing 3-second **per-I/O** socket timeouts,
+128-request limit, and 16 MiB request cap. This is not an end-to-end
+transaction deadline. Real-process TCP and certificate-verified TLS1.3
+regressions exercise slow authenticated header reception.
 
 These are scoped resource-exhaustion mitigations, **not** comprehensive DoS
 protection: eight workers and 32 queued sockets may still be saturated for
 the bounded handshake interval, and no per-principal fairness/quotas or
-runtime heap budget is guaranteed. Longer authenticated sessions remain
-subject only to per-I/O timeouts; malicious authorized clients may also
-trickle large frames. Do not expose any non-loopback RPC listener. Full
-rate/backpressure controls, authenticated-session deadlines, cancellation,
-adversarial fuzzing and remote policy remain in
+runtime heap budget is guaranteed. A malicious authorized client can still
+occupy resources during backend processing or outbound responses, and the
+per-frame ingress budget is **not** a global session lifetime or fairness
+quota. Do not expose any non-loopback RPC listener. Full rate/backpressure
+controls, end-to-end operation deadlines, cancellation, adversarial fuzzing
+and remote policy remain in
 [#39](https://github.com/KeyserDSoze/RystemDatabase/issues/39).
 
 `PING` (operation=2) accepts **empty** payload and returns an empty success payload. The prototype does not yet negotiate API capabilities, authentication, schema version or topology.

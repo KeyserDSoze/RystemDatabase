@@ -26,14 +26,15 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_PRE_AUTH_PAYLOAD_BYTES: usize = 36;
 
 
-// #73: A socket timeout applies to EACH system read/write; a peer sending one
-// byte every 2 seconds can otherwise keep read_exact (and rustls) busy for
-// minutes. Preserve one absolute budget starting at TCP acceptance, even while
-// the connection is waiting in the bounded worker queue. Enforce the remaining
-// budget at the *underlying socket* layer so TLS record parsing cannot reset it.
+// #73: one accept-to-HELLO absolute deadline through TLS/mTLS handshakes.
+// #77: every later complete RSWP request has its own absolute *ingress*
+// deadline. Both are enforced at the underlying socket layer so repeated
+// read_exact/rustls reads cannot restart the clock. Disk work and response
+// writes retain their previous (separate) per-I/O timeouts.
 struct DeadlineSocket {
     socket: TcpStream,
     pre_auth_until: Option<Instant>,
+    frame_until: Option<Instant>,
 }
 
 impl DeadlineSocket {
@@ -44,15 +45,18 @@ impl DeadlineSocket {
         Ok(Self {
             socket,
             pre_auth_until: Some(accepted_at + TIMEOUT),
+            frame_until: None,
         })
     }
 
     fn remaining(&self) -> io::Result<Option<Duration>> {
-        self.pre_auth_until.map(|until| {
+        // These deadlines never overlap: HELLO releases its budget before
+        // accepting any subsequent RSWP frame.
+        self.pre_auth_until.or(self.frame_until).map(|until| {
             until.checked_duration_since(Instant::now())
                 .filter(|remaining| !remaining.is_zero())
                 .ok_or_else(|| io::Error::new(
-                    io::ErrorKind::TimedOut, "pre-authentication deadline expired"
+                    io::ErrorKind::TimedOut, "RSWP handshake/frame ingress deadline expired"
                 ))
         }).transpose()
     }
@@ -81,6 +85,28 @@ impl DeadlineSocket {
         Ok(())
     }
 
+    fn begin_frame_receive(&mut self) -> io::Result<()> {
+        if self.pre_auth_until.is_some() || self.frame_until.is_some() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput,
+                "cannot overlap RPC frame ingress deadlines"));
+        }
+        self.frame_until = Some(Instant::now() + TIMEOUT);
+        Ok(())
+    }
+
+    fn finish_frame_receive(&mut self) -> io::Result<()> {
+        if self.frame_until.is_none() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput,
+                "no active RPC frame ingress deadline"));
+        }
+        // A frame that finished only after its deadline is not accepted.
+        self.remaining()?;
+        self.frame_until = None;
+        // Do not apply the ingress budget to backend storage/fsync or to
+        // sending the reply. Preserve the existing per-I/O socket limits.
+        self.socket.set_read_timeout(Some(TIMEOUT))
+    }
+
     fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         self.socket.set_read_timeout(timeout)
     }
@@ -105,21 +131,36 @@ impl Write for DeadlineSocket {
     }
 }
 
-// Both plaintext RSWP and rustls StreamOwned must release their deadline
-// ONLY after a valid authenticated HELLO response has been flushed.
+// Both plaintext and rustls must apply deadlines to the underlying socket.
+// HELLO's accept-time budget ends only after its reply was flushed; each
+// later frame receives an independent read-only budget (#77).
 trait PreAuthTransport: Read + Write {
     fn finish_pre_auth(&mut self) -> io::Result<()>;
+    fn begin_frame_receive(&mut self) -> io::Result<()>;
+    fn finish_frame_receive(&mut self) -> io::Result<()>;
 }
 
 impl PreAuthTransport for DeadlineSocket {
     fn finish_pre_auth(&mut self) -> io::Result<()> {
         DeadlineSocket::finish_pre_auth(self)
     }
+    fn begin_frame_receive(&mut self) -> io::Result<()> {
+        DeadlineSocket::begin_frame_receive(self)
+    }
+    fn finish_frame_receive(&mut self) -> io::Result<()> {
+        DeadlineSocket::finish_frame_receive(self)
+    }
 }
 
 impl PreAuthTransport for rustls::StreamOwned<rustls::ServerConnection, DeadlineSocket> {
     fn finish_pre_auth(&mut self) -> io::Result<()> {
         self.sock.finish_pre_auth()
+    }
+    fn begin_frame_receive(&mut self) -> io::Result<()> {
+        self.sock.begin_frame_receive()
+    }
+    fn finish_frame_receive(&mut self) -> io::Result<()> {
+        self.sock.finish_frame_receive()
     }
 }
 
@@ -343,7 +384,12 @@ fn handle_client_frames<S: PreAuthTransport>(
         // HELLO body. Once a valid HELLO is authenticated, retain the
         // unchanged 16 MiB CRUD frame limit for the same connection.
         let frame = if greeted {
-            read_frame(stream)
+            if stream.begin_frame_receive().is_err() { return false; }
+            let frame = read_frame(stream);
+            // Even if the last bytes arrived after 3s, do not process a
+            // frame from a peer that exhausted its total ingress budget.
+            if stream.finish_frame_receive().is_err() { return false; }
+            frame
         } else {
             read_frame_with_limit(stream, MAX_PRE_AUTH_PAYLOAD_BYTES)
         };
