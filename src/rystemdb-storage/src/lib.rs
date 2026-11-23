@@ -343,13 +343,49 @@ impl DocumentStore {
     pub fn commit_batch(
         &mut self, snapshot: &DocumentSnapshot, mutations: &[BatchMutation<'_>],
     ) -> Result<(), StoreError> {
+        self.commit_batch_checked(snapshot, &[], mutations)
+    }
+
+    /// Atomically commit a mutation batch only if **all explicitly supplied**
+    /// point-read dependencies and all written keys still match the snapshot.
+    /// Callers must list every point ID observed for the write decision,
+    /// including IDs that were absent at capture time. An absent->PUT->DELETE
+    /// cycle counts as a change via the committed tombstone-generation ledger.
+    ///
+    /// Up to 1,024 DISTINCT read IDs are accepted; duplicates, invalid IDs,
+    /// stale versions and foreign roots fail before encoding or appending.
+    /// Read IDs may overlap mutated keys. Checks use only index metadata:
+    /// no disk reads or RDB decoding for read-set validation. The existing
+    /// single-writer &mut self guarantees no interleaving before the append.
+    ///
+    /// This is caller-declared point-key optimistic validation, NOT automatic
+    /// read tracking, range/phantom protection, SQL serializability, MVCC GC
+    /// or transactions with concurrent independent writers.
+    pub fn commit_batch_checked(
+        &mut self,
+        snapshot: &DocumentSnapshot,
+        read_ids: &[&str],
+        mutations: &[BatchMutation<'_>],
+    ) -> Result<(), StoreError> {
         use std::collections::BTreeSet;
         self.ensure_healthy()?;
         if self.root != snapshot.root {
             return Err(StoreError::InvalidSnapshot);
         }
-        if !(2..=MAX_BATCH_OPERATIONS).contains(&mutations.len()) {
+        if !(2..=MAX_BATCH_OPERATIONS).contains(&mutations.len())
+            || read_ids.len() > MAX_BATCH_OPERATIONS
+        {
             return Err(StoreError::InvalidBatch);
+        }
+        let mut reads = BTreeSet::new();
+        for &id in read_ids {
+            validate_id(id)?;
+            if !reads.insert(id) {
+                return Err(StoreError::InvalidBatch);
+            }
+            if self.versions.get(id) != snapshot.versions.get(id) {
+                return Err(StoreError::Conflict);
+            }
         }
         let mut seen = BTreeSet::new();
         for mutation in mutations {
