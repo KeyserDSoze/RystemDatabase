@@ -74,3 +74,41 @@ test("TDD RED #74: malformed declared-large RSWP header fails closed before rece
     "client must reject invalid magic immediately, not allocate/wait for a 1 MiB body");
   await client.close();
 });
+
+test("TDD #74: two coalesced responses plus split header preserve both request IDs", async () => {
+  const socket = new FakeSocket();
+  const client = new RystemLocalClient(socket);
+  try {
+    const first = client.ping();
+    const second = client.ping();
+    assert.deepEqual(socket.sent.map(bytes => decode(bytes).requestId), [1n, 2n]);
+    const reply1 = Buffer.from(encode({
+      kind: 2, operation: 2, requestId: 1n, status: 0, payload: new Uint8Array(),
+    }));
+    const reply2 = Buffer.from(encode({
+      kind: 2, operation: 2, requestId: 2n, status: 0, payload: new Uint8Array(),
+    }));
+    const both = Buffer.concat([reply1, reply2]);
+    // Header of first reply split into 1-byte and 7-byte pieces;
+    // remainder includes a full second response in the same read.
+    socket.emit("data", both.subarray(0, 1));
+    socket.emit("data", both.subarray(1, 8));
+    socket.emit("data", both.subarray(8));
+    await Promise.all([first, second]);
+    assert.equal(socket.destroyed, false);
+  } finally {
+    await client.close();
+  }
+});
+
+test("TDD #74: valid header with unknown request ID fails before claimed body", async () => {
+  const socket = new FakeSocket();
+  const client = new RystemLocalClient(socket);
+  const header = Buffer.from(encode({
+    kind: 2, operation: 17, requestId: 404n, status: 0, payload: new Uint8Array(),
+  }));
+  header.writeUInt32BE(16 * 1024 * 1024, 20);
+  socket.emit("data", header);
+  assert.equal(socket.destroyed, true, "unknown response must fail before body allocation");
+  await client.close();
+});
