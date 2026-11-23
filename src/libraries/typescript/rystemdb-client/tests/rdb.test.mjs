@@ -139,3 +139,15 @@ test("TDD #71: aggregate RDB node budget bounds dense and nested arrays", () => 
     "nested containers bypassed aggregate document limit");
   assert.throws(() => encodeRdb(nested), /too many|node|limit|large/i);
 });
+
+test("TDD RED #78: reject bad RDB object keys before parsing invalid child values", () => {
+  const cases = [
+    ["adjacent duplicate", "524442000108000000020000000161000000000161ff", /duplicate/i],
+    ["descending key", "524442000108000000020000000162000000000161ff", /canonical|order/i],
+    ["nonadjacent duplicate", "524442000108000000030000000161000000000163000000000161ff", /duplicate/i],
+  ];
+  for (const [name, hex, reason] of cases) {
+    assert.throws(() => decodeRdb(Uint8Array.from(Buffer.from(hex, "hex"))),
+      reason, "invalid child must NOT be traversed after bad key: " + name);
+  }
+});

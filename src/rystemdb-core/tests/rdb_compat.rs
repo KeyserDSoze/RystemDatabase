@@ -120,3 +120,24 @@ fn tdd_rdb_aggregate_value_node_budget_rejects_dense_and_nested_expansion() {
     assert!(matches!(encode(&nested), Err(rystemdb_core::CodecError::TooLarge)),
         "encoder accepted aggregate nested values over the limit");
 }
+
+// #78 RED: check an invalid object field key *before* attempting to parse
+// its potentially huge/malformed child value. Duplicate and order errors
+// must win over an invalid tag that is already unreachable in a valid frame.
+#[test]
+fn tdd_rdb_fail_fast_invalid_object_keys_before_child_decode() {
+    use rystemdb_core::CodecError;
+    for (case, bytes, expected) in [
+        ("adjacent duplicate before invalid child",
+            "524442000108000000020000000161000000000161ff",
+            CodecError::DuplicateKey),
+        ("descending key before invalid child",
+            "524442000108000000020000000162000000000161ff",
+            CodecError::NonCanonicalKeyOrder),
+        ("nonadjacent duplicate before invalid child",
+            "524442000108000000030000000161000000000163000000000161ff",
+            CodecError::DuplicateKey),
+    ] {
+        assert_eq!(decode(&hex_vec(bytes)), Err(expected), "{case}");
+    }
+}

@@ -219,3 +219,21 @@ for (byte larger = (byte)'b'; larger <= (byte)'z'; larger++) {
     }
 }
 Console.WriteLine("Rystem .NET strict canonical RDB object keys: PASS");
+
+// #78 RED: duplicate/noncanonical RDB object keys are sufficient to reject
+// the frame. The following child may be malformed or arbitrarily expensive;
+// validation of the key must win over trying to decode that child.
+foreach (var (hex, expected) in new[] {
+    ("524442000108000000020000000161000000000161ff", "Duplicate"),
+    ("524442000108000000020000000162000000000161ff", "Noncanonical"),
+    ("524442000108000000030000000161000000000163000000000161ff", "Duplicate"),
+}) {
+    try {
+        RystemRdbCodec.Decode(Convert.FromHexString(hex));
+        throw new Exception("Invalid RDB field key unexpectedly accepted");
+    } catch (ArgumentException ex) {
+        Check(ex.Message.Contains(expected, StringComparison.OrdinalIgnoreCase),
+            $"RDB must reject invalid field key as {expected} before decoding child: {ex.Message}");
+    }
+}
+Console.WriteLine("Rystem .NET fail-fast RDB object keys: PASS");
