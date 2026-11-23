@@ -61,6 +61,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/check_storage_benchmark.py --self-test
+          # #92 TDD RED first: SQLite comparator/fixture contract must exist.
+          python3 scripts/test_sqlite_benchmark.py
           cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
             --records 64 --operations 128 --payload-bytes 128 --seed 42 \
             --json-output storage-benchmark.ndjson
