@@ -118,6 +118,69 @@ repeatable performance baselines. **Only correctness, schema,
 nonempty samples and bounded input are CI pass/fail conditions. There is
 no absolute millisecond gate** to produce spurious red CI on noisy hosts.
 
+## Native Rust SQLite typed-RDB comparison (#94; child of #93)
+
+The follow-up to #92 adds an **isolated** `benchmarks/sqlite-native`
+Cargo project. It is **not a member of Rystem's production workspace**;
+only the benchmark-only crate depends on `rusqlite` with bundled SQLite,
+`serde_json` and the existing local Rystem codec/storage crates.
+Neither the production Rystem `Cargo.toml` nor the storage format
+acquires a SQLite dependency. The standalone dependency graph uses a
+separate lockfile, and the native driver runs only in the Linux
+benchmark CI step.
+
+```sh
+# First reproduce the exact #92 typed RDB fixture on the same host:
+cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
+  --records 64 --operations 128 --payload-bytes 128 --seed 42 \
+  --json-output storage-benchmark.ndjson \
+  --fixture-output storage-fixture.ndjson
+
+# Native driver uses rusqlite to open a separate real SQLite WAL/FULL DB:
+cargo test --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
+cargo run --release --manifest-path benchmarks/sqlite-native/Cargo.toml -- \
+  --fixture storage-fixture.ndjson \
+  --output sqlite-rust-benchmark.ndjson
+python3 scripts/check_native_sqlite_benchmark.py --self-test
+python3 scripts/check_native_sqlite_benchmark.py \
+  --native-report sqlite-rust-benchmark.ndjson \
+  --rystem-report storage-benchmark.ndjson
+```
+
+The native driver parses and validates **the same exact Rust-exported
+canonical RDB v1 bytes** for every original value, update and two-key
+batch; it independently recreates the seeded key-order and typed
+synthetic document with Rystem's codec. Invalid metadata, out-of-order
+keys, oversized inputs and valid-but-tampered documents fail before
+benchmarking. Every acknowledged SQLite INSERT/UPDATE/DELETE uses
+`BEGIN IMMEDIATE` / `COMMIT` with verified `WAL` and `FULL`;
+two rows in one batch use **one** SQLite transaction, rolling back both
+when either write fails. Prepared SELECTs are cached. Every measured
+warm-hit read includes actual `rystemdb_core::decode` and returns
+the typed value plus exact original bytes, with correctness checked
+outside the timed sample. Tests cover typed nested data, references,
+nulls, explicit corrupt-BLOB rejection, atomic rollback, and reopen
+persistence.
+
+The independent native report labels
+`driver=native_rust_rusqlite` and
+`payload_semantics=rdb_v1_typed_decode_no_rysf_outer_crc`,
+and captures the **actual bundled SQLite engine version**, Rust
+process OS/arch, per-operation nanosecond/millisecond
+p50/p95/p99, loop-wall throughput and disk/WAL/SHM footprint.
+It is stored alongside existing Rystem and Python SQLite raw reports
+under a single per-SHA artifact. **The measured native GET does
+decode RDB, but SQLite does not have Rystem's outer CRC-protected RYSF
+frame**. Production equivalence, query language and transaction
+isolation are not yet established. An early shared-runner sample is
+not a definitive ranking or per-request SLA.
+
+This is an **incremental part of #93, not closure of #93**. The parent
+still requires interleaved/randomized order, at least five independent
+runs **on dedicated hardware**, 1K/100K cardinality and cache controls,
+CPU/memory and storage profiling, and integrity+durability parity
+before an honest engine performance ranking.
+
 ## First real SQLite WAL/FULL exploratory baseline (#92, child of #89)
 
 **This is deliberately not a speed ranking.** The benchmark now exports

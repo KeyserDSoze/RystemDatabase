@@ -13,9 +13,11 @@ PUT/GET/UPDATE/DELETE, snapshots, staged atomic batches and restart
 latency. CI publishes **raw per-commit p50/p95/p99 telemetry**, without
 brittle millisecond thresholds on shared runners. Follow
 [the performance methodology](docs/PERFORMANCE.md) for exact commands,
-early exploratory results, the new **real SQLite WAL/FULL fixture-matched
-baseline (not directly comparable due to Python/raw-BLOB vs Rust/typed-RDB
-semantics)**, and the pending fair PostgreSQL/RocksDB/DuckDB comparison plan. No cross-engine speed ranking is validated.
+early exploratory results, the SQLite WAL/FULL fixture-matched baselines: Python raw-BLOB
+and an **isolated native Rust typed-RDB SQLite driver**, both explicitly
+lacking Rystem's outer RYSF CRC integrity policy. They remain exploratory
+rather than a definitive ranking; PostgreSQL/RocksDB/DuckDB
+comparisons are still pending. No cross-engine speed ranking is validated.
 
 ## Build and test
 

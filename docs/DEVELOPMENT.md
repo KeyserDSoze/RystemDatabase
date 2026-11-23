@@ -18,6 +18,33 @@ docker build -f docker/Dockerfile -t rystemdb:local .
 
 Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors.
 
+## Native Rust SQLite typed-decode comparator (#94)
+
+```sh
+cargo test --manifest-path benchmarks/sqlite-native/Cargo.toml --all-targets
+cargo clippy --manifest-path benchmarks/sqlite-native/Cargo.toml \
+  --all-targets -- -D warnings
+cargo run --release --manifest-path benchmarks/sqlite-native/Cargo.toml -- \
+  --fixture storage-fixture.ndjson \
+  --output sqlite-rust-benchmark.ndjson
+python3 scripts/check_native_sqlite_benchmark.py --self-test
+python3 scripts/check_native_sqlite_benchmark.py \
+  --native-report sqlite-rust-benchmark.ndjson \
+  --rystem-report storage-benchmark.ndjson
+```
+
+This standalone benchmark-only Rust crate depends on `rusqlite`
+and bundled SQLite **outside the production workspace**. It parses
+#92's actual seeded typed-RDB v1 fixture, validates values and key
+order against the Rust deterministic generator, and uses actual
+SQLite WAL/FULL commits with the same raw bytes and operation
+order. Measured GET includes RDB typed decoding; an independent
+validator requires an explicit `no_rysf_outer_crc` label
+instead of misleading full-integrity parity. CI archives the raw
+native report alongside Rust and Python samples without milliseconds
+thresholds. Parent #93 stays open for controlled host-level repeated
+A/B experiments and full semantics; see [PERFORMANCE.md](PERFORMANCE.md).
+
 ## SQLite WAL/FULL baseline over exact Rust-generated typed RDB corpus (#92)
 
 ```sh
