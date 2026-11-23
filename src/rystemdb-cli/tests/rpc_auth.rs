@@ -296,3 +296,42 @@ fn tdd_absolute_pre_auth_deadline_closes_trickling_hello_header() {
     assert_eq!(send(&mut valid, Operation::Hello, 902, hello(&READ_TOKEN)).status, 0);
     assert_eq!(send(&mut valid, Operation::Ping, 903, vec![]).status, 0);
 }
+
+
+/// #77 RED: authenticated clients can still drip-feed a *new* frame.
+#[test]
+fn tdd_absolute_post_hello_plaintext_frame_receive_deadline() {
+    let dir = Temp::new();
+    let policy = dir.dir().join("acl.txt");
+    credentials(&policy);
+    let server = Running::start(&dir.dir().join("store"), &policy);
+    let mut socket = server.connect();
+    assert_eq!(send(&mut socket, Operation::Hello, 1001, hello(&READ_TOKEN)).status, 0);
+    assert_eq!(send(&mut socket, Operation::Ping, 1002, vec![]).status, 0);
+
+    // Genuine RSWP header, but send only 2 of 24 bytes. Each fragment arrives
+    // within the old rolling 3-second per-read timeout; total time > 3 seconds.
+    socket.set_read_timeout(Some(Duration::from_millis(800))).unwrap();
+    let frame = rystemdb_protocol::encode(
+        &Frame::request(Operation::Ping, 1003, vec![])
+    ).unwrap();
+    socket.write_all(&frame[..1]).unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+    socket.write_all(&frame[1..2]).unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+
+    let mut first = [0u8; 1];
+    match socket.read(&mut first) {
+        Ok(0) => {}
+        Err(err) if matches!(err.kind(),
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted) => {}
+        Ok(n) => panic!("incomplete post-HELLO frame returned {n} response bytes"),
+        Err(err) => panic!(
+            "authenticated drip-fed frame occupied worker beyond one absolute 3s ingress budget: {err:?}"
+        ),
+    }
+
+    let mut legitimate = server.connect();
+    assert_eq!(send(&mut legitimate, Operation::Hello, 1004, hello(&READ_TOKEN)).status, 0);
+    assert_eq!(send(&mut legitimate, Operation::Ping, 1005, vec![]).status, 0);
+}

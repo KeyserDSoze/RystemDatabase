@@ -235,3 +235,72 @@ fn tdd_tls_handshake_trickle_does_not_reset_absolute_pre_auth_deadline() {
     ).expect("legitimate TLS client must connect after a trickle attack");
     client.ping().unwrap();
 }
+
+
+/// #77 RED: an authenticated TLS1.3 session must not reset a fresh frame's
+/// three-second ingress budget at each encrypted record read.
+#[test]
+fn tdd_absolute_post_hello_tls13_frame_receive_deadline() {
+    use std::io::Read;
+    use std::sync::Arc;
+
+    let f = Fixture::new();
+    let server = f.start();
+    let socket = TcpStream::connect(server.address).unwrap();
+    socket.set_read_timeout(Some(Duration::from_millis(800))).unwrap();
+    socket.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+
+    // Real rustls client; verify the server CA and DNS SAN, negotiate only
+    // TLS1.3, and authenticate RSWP HELLO before sending a partial frame.
+    let ca_pem = fs::read(&f.ca).unwrap();
+    let mut pem = ca_pem.as_slice();
+    let certs = rustls_pemfile::certs(&mut pem)
+        .collect::<Result<Vec<_>, _>>().unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in certs { roots.add(cert).unwrap(); }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13]).unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let name = rustls::pki_types::ServerName::try_from("localhost".to_owned()).unwrap();
+    let conn = rustls::ClientConnection::new(Arc::new(config), name).unwrap();
+    let mut tls = rustls::StreamOwned::new(conn, socket);
+
+    let hello: Vec<u8> = vec![1,0,0,32].into_iter()
+        .chain(READ_WRITE_TOKEN).collect();
+    rystemdb_protocol::write_frame(&mut tls,
+        &rystemdb_protocol::Frame::request(rystemdb_protocol::Operation::Hello, 2001, hello)
+    ).unwrap();
+    tls.flush().unwrap();
+    let reply = rystemdb_protocol::read_frame(&mut tls).unwrap();
+    assert_eq!(reply.status, 0);
+    assert_eq!(reply.payload, [1,0]);
+
+    let ping = rystemdb_protocol::encode(&rystemdb_protocol::Frame::request(
+        rystemdb_protocol::Operation::Ping, 2002, vec![]
+    )).unwrap();
+    tls.write_all(&ping[..1]).unwrap();
+    tls.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+    tls.write_all(&ping[1..2]).unwrap();
+    tls.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(1700));
+
+    let mut first = [0u8; 1];
+    match tls.read(&mut first) {
+        Ok(0) => {}
+        Err(err) if matches!(err.kind(),
+            std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset |
+            std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::BrokenPipe) => {}
+        Ok(n) => panic!("incomplete authenticated TLS RSWP frame returned {n} bytes"),
+        Err(err) => panic!(
+            "TLS1.3 authenticated trickle kept worker past absolute frame-ingress deadline: {err:?}"
+        ),
+    }
+
+    let mut legitimate = LocalClient::connect_tls(
+        server.address, "localhost", &f.ca, &READ_WRITE_TOKEN
+    ).expect("fresh legitimate TLS1.3 HELLO must still succeed");
+    legitimate.ping().unwrap();
+}
