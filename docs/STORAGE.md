@@ -117,6 +117,49 @@ Regression:
 `cargo test -p rystemdb-storage --locked --test batch_commit`
 (and with `--features fault-injection` for process-crash tests).
 
+## Indexed GET skips the metadata syscall (#97; child #90/#2)
+
+`DocumentStore::get`, `DocumentSnapshot::get` and both bounded
+`get_many` methods now use the private `read_frame_indexed` reader.
+An existing in-memory index already supplies the physical RYSF
+`(segment, offset)`, so for each needed segment the reader no longer
+calls `File::metadata()` merely to calculate a known segment
+length. Each single successful indexed GET therefore avoids **one
+explicit metadata/stat request** (as does each opened segment during
+a grouped read). It still opens the segment by its current path;
+**there are no persistent open-descriptor caches**.
+
+Crucially, the optimized path reuses the existing bounded
+`read_frame` parser, which still checks RYSF magic/version/flags,
+all declared header/ID/payload constraints, the **full CRC-32 of the
+complete physical frame**, and canonical typed RDB decoding including
+all members of a BATCH3 frame. Indexed reads are not log replay:
+a short `read_exact` or incomplete indexed frame is
+`StoreError::Corrupt`, **never None or a benign replay tail**.
+Other failures (for example an unlinked segment) stay I/O errors.
+`read_frame(file, offset, segment_len)` and all physical tail-recovery
+checks used during store startup/replay remain unchanged. No RYSF
+format changes, writer-lock changes or weakened failure handling.
+
+RED crate-private helper tests prove a missing new reader API before
+implementation; independent disk tests cover stored legacy and typed
+BATCH3/Null data, duplicates, snapshots across overwrite/rollover/
+restart, short header, truncated batch body, CRC-corrupt member and
+missing segment. Execute:
+
+```sh
+cargo test -p rystemdb-storage --locked --test indexed_read_integrity
+cargo test -p rystemdb-storage --locked indexed_reader_fast_path_tests
+```
+
+This **eliminates a redundant source-code system call**; it does
+not by itself establish a statistically significant latency gain.
+The existing #88 release-mode warm GET p50/p95/p99 and five-run
+#96 Rystem/SQLite smoke continue to report raw diagnostic telemetry.
+Parent #90 stays OPEN for profiler evidence and controlled same-host,
+multiple-run A/B measurements across larger cardinalities; parent
+#2 stays OPEN for broader crash-safe storage maturity.
+
 ## Bounded grouped point reads (#91; performance child #90/#12)
 
 `DocumentStore::get_many(&[id, ...])` and

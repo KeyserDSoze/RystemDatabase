@@ -118,6 +118,33 @@ repeatable performance baselines. **Only correctness, schema,
 nonempty samples and bounded input are CI pass/fail conditions. There is
 no absolute millisecond gate** to produce spurious red CI on noisy hosts.
 
+## Indexed metadata/stat avoidance for hot GET (#97)
+
+Previously each live `DocumentStore::get` and
+`DocumentSnapshot::get` opened the on-disk RYSF segment and called
+`File::metadata()` before decoding it. In the new indexed-only read
+path, the already-replayed ID index provides the segment/offset; a
+dedicated private helper reuses the **same whole-frame RYSF CRC and
+typed-RDB decoder** without first asking the file size. Truncated
+header/body errors now surface as `Corrupt` through `read_exact`;
+missing files remain I/O errors. Replay still uses the segment's
+actual file length for safe recovery of incomplete final frames.
+The grouped multi-key reader also skips the single stat call per
+segment. The number of explicitly requested filesystem metadata
+operations is therefore reduced by **one per successful single GET**
+and **one per opened segment per grouped get_many call**.
+No new persistent file handles, memory cache, wire or storage format.
+
+This establishes **a code-path syscall reduction, not a measured
+response-time improvement**. OS implementations, CPU costs and cache
+behavior differ; existing `get_hit_typed_crc_warm` and grouped
+benchmark rows automatically observe the new path. Per-commit
+GitHub-hosted p50/p99 values remain subject to large I/O noise.
+This change does not fix the throughput comparison parity gap:
+native SQLite typed GET omits Rystem's outer RYSF CRC. Further
+statistically meaningful old/new A/B on dedicated hardware remains
+open in [#90](https://github.com/KeyserDSoze/RystemDatabase/issues/90).
+
 ## Five fresh-database alternating-order native benchmark repetitions (#96)
 
 Child [#96](https://github.com/KeyserDSoze/RystemDatabase/issues/96) provides a

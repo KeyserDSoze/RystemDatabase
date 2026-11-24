@@ -18,6 +18,32 @@ docker build -f docker/Dockerfile -t rystemdb:local .
 
 Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors.
 
+## Metadata-free indexed GET, strict EOF/CRC safety (#97)
+
+```sh
+cargo test -p rystemdb-storage --locked --test indexed_read_integrity
+cargo test -p rystemdb-storage --locked indexed_reader_fast_path_tests
+cargo test -p rystemdb-storage --locked --features fault-injection --tests
+cargo run --release --locked -p rystemdb-storage --example bench_storage -- \
+  --records 64 --operations 128 --payload-bytes 128 --seed 42
+```
+
+The fast `read_frame_indexed` reuses the same full-frame CRC and
+typed-RDB parser, but avoids the redundant `File::metadata()` call
+once per segment opened for an indexed GET/multi-get. Unexpected
+physical EOF returns `Corrupt`, not a successful incomplete frame.
+Replayed segments **still** use their actual file size for crash
+recovery. Test real filesystem truncation of both header and BATCH3
+body, changed CRC, missing segment after writer close, historical
+snapshots and rollback/restart behavior. No persistent descriptor
+cache, binary-format or production transaction changes.
+
+The single-key benchmark exists already, but even a lower shared CI
+p50 is **not** sufficient to close profiling parent #90. Dedicated
+old/new builds on one controlled host, at least five repeated runs,
+1K/100K dataset sizes, warm/cold cache, RSS, descriptors and kernel
+syscall samples are still required. See [PERFORMANCE.md](PERFORMANCE.md).
+
 ## Alternating five-run Rystem–SQLite A/B performance regression (#96)
 
 ```sh
