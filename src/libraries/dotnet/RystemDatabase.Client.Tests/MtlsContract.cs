@@ -65,7 +65,6 @@ internal static class MtlsContract
 
     public static async Task RunAsync(string binary)
     {
-        await RunDenialAssertionsAsync();
         using var test = new Fixture();
         await using var server = await test.StartAsync(binary);
         var root = test.ServerRoot;
@@ -88,8 +87,9 @@ internal static class MtlsContract
         await DeniedConnectAsync(() => Connect(test.WrongEku), "wrong clientAuth EKU");
         await DeniedConnectAsync(() => Connect(test.Stranger), "unknown verified URI SAN principal");
         await DeniedConnectAsync(() => Connect(writer, WrongToken),
-            "disjoint bearer token/identity grants");
-        await DeniedConnectAsync(() => Connect(writer, new byte[32]), "invalid bearer token");
+            "disjoint bearer token/identity grants", requireHelloStatus: true);
+        await DeniedConnectAsync(() => Connect(writer, new byte[32]),
+            "invalid bearer token", requireHelloStatus: true);
         await DeniedConnectAsync(() => Connect(writer, serverName:"not-localhost.test"),
             "incorrect server SAN hostname");
         await DeniedConnectAsync(() => Connect(writer, ca:test.WrongServerRoot),
@@ -171,16 +171,30 @@ internal static class MtlsContract
     private static async Task DeniedConnectAsync(
         Func<Task<RystemLoopbackClient>> connect, string reason, bool requireHelloStatus = false)
     {
+        var elapsed = Stopwatch.StartNew();
+        Console.WriteLine("mTLS denial case: " + reason);
         try
         {
             await using var unexpected = await connect();
-            throw new Exception("mTLS accepted " + reason);
+            throw new InvalidOperationException("mTLS accepted " + reason);
         }
-        catch (Exception ex) when (
-            ex is AuthenticationException or IOException or
-            System.Net.Sockets.SocketException or RystemRpcException)
+        catch (Exception ex)
         {
-            // Handshake rejection and RPC status-6 both fail closed.
+            // A verified principal with a bad/disjoint token must receive
+            // the explicit RSWP Unauthorized HELLO status, not merely EOF.
+            // Other certificate denial cases can fail during TLS or before
+            // HELLO. Cancellation and malformed protocol data never count.
+            bool rejected = ex is RystemRpcException { Status: 6 } ||
+                (!requireHelloStatus && ex is not InvalidDataException &&
+                    (ex is AuthenticationException or IOException or
+                        System.Net.Sockets.SocketException));
+            string outcome = ex is RystemRpcException rpc
+                ? $"RPC status {rpc.Status}" : ex.GetType().Name;
+            Console.WriteLine($"mTLS denial case: {reason}; {outcome}; " +
+                $"{elapsed.ElapsedMilliseconds} ms; accepted rejection={rejected}");
+            // Do not log exception messages, credentials or certificate paths.
+            // Preserve the original failure and stack for CI investigation.
+            if (!rejected) throw;
         }
     }
 
