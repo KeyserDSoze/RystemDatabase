@@ -858,11 +858,11 @@ fn read_indexed_many(
     let mut results = vec![None; ids.len()];
     for (segment, frames) in grouped {
         let mut file = File::open(segment_path(root, segment))?;
-        let size = file.metadata()?.len();
         for (offset, requests) in frames {
-            // read_frame verifies the WHOLE CRC and nested RDB body before
-            // exposing any member of a checksummed BATCH3 frame.
-            match read_frame(&mut file, offset, size)? {
+            // No fstat: an indexed physical location is already known.
+            // A short physical read remains Corrupt; full CRC + RDB decode
+            // is still performed for every complete shared BATCH3 frame.
+            match read_frame_indexed(&mut file, offset)? {
                 FrameRead::Complete { id: stored_id, value: Some(value), .. } => {
                     for (index, requested_id) in requests {
                         if requested_id != stored_id {
@@ -897,13 +897,36 @@ fn read_indexed_many(
     Ok(results)
 }
 
+/// Verify a physical frame at an index-derived offset without a separate
+/// `File::metadata()`/fstat lookup. The index was built from a fully replayed,
+/// CRC-verified log, so this method does NOT guess offsets or skip validation.
+///
+/// We intentionally reuse the same bounded RYSF header/CRC/typed-RDB decoder
+/// used by recovery. `u64::MAX` only disables the *replay-specific* "known
+/// physical segment length" early check: an unexpectedly short indexed read
+/// is NEVER a benign incomplete replay tail, and instead fails as Corrupt.
+/// Other I/O errors (e.g. vanished segment) retain their existing error type.
+/// Replay itself keeps passing the actual segment length to `read_frame`.
+fn read_frame_indexed(file: &mut File, offset: u64) -> Result<FrameRead, StoreError> {
+    match read_frame(file, offset, u64::MAX) {
+        Err(StoreError::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+            Err(StoreError::Corrupt(format!(
+                "truncated indexed frame at offset {offset}"
+            )))
+        }
+        Ok(FrameRead::Incomplete) => Err(StoreError::Corrupt(format!(
+            "incomplete indexed frame at offset {offset}"
+        ))),
+        outcome => outcome,
+    }
+}
+
 fn read_indexed(
     root: &Path, entries: &BTreeMap<String, Location>, id: &str,
 ) -> Result<Option<Value>, StoreError> {
     let Some(location) = entries.get(id) else { return Ok(None); };
     let mut file = File::open(segment_path(root, location.segment))?;
-    let size = file.metadata()?.len();
-    match read_frame(&mut file, location.offset, size)? {
+    match read_frame_indexed(&mut file, location.offset)? {
         FrameRead::Complete { id: stored_id, value: Some(value), .. } if stored_id == id => {
             Ok(Some(value))
         }
