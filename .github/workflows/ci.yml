@@ -172,6 +172,8 @@ jobs:
           # .NET 10 macOS TLS1.3 needs Network.framework (legacy
           # SecureTransport does not implement TLS1.3).
           DOTNET_SYSTEM_NET_SECURITY_USENETWORKFRAMEWORK: ${{ runner.os == 'macOS' && '1' || '0' }}
+          # #99: bounded sequential fresh-connection mTLS stress, no retries.
+          RYSTEMDB_MTLS_DENIAL_ROUNDS: ${{ runner.os == 'macOS' && '10' || '2' }}
         run: dotnet run --project src/libraries/dotnet/RystemDatabase.Client.Tests/RystemDatabase.Client.Tests.csproj --configuration Release -- "$RYSTEMDB_BINARY"
       - name: Build EF Core library scaffold
         run: dotnet build src/libraries/dotnet/RystemDatabase.EntityFrameworkCore/RystemDatabase.EntityFrameworkCore.csproj --configuration Release
