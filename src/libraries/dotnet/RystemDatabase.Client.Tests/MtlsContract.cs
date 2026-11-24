@@ -14,9 +14,32 @@ internal static class MtlsContract
 
     private sealed record Identity(string Certificate, string PrivateKey);
 
+    // #99 RED: validate the repeat configuration without starting a server.
+    private static void VerifyDenialRoundConfiguration()
+    {
+        Require(ParseDenialRounds(null) == 1, "Default mTLS rounds must be one");
+        for (int count = 1; count <= 20; count++)
+            Require(ParseDenialRounds(count.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                == count, "mTLS round count changed");
+        foreach (string invalid in new[] { "", "0", "21", "-1", "+1", "01",
+            " 1", "1 ", "1.0", "١", "99999999999999999999" })
+        {
+            try
+            {
+                _ = ParseDenialRounds(invalid);
+                throw new InvalidOperationException("Invalid mTLS round count accepted");
+            }
+            catch (ArgumentException) { }
+        }
+    }
+
+    // RED placeholder: configuration is not implemented yet.
+    private static int ParseDenialRounds(string? configured) => 1;
+
     // #98: deterministic negative-contract checks, independent of TLS/platform.
     public static async Task RunDenialAssertionsAsync()
     {
+        VerifyDenialRoundConfiguration();
         static Func<Task<RystemLoopbackClient>> Fault(Exception error)
             => () => Task.FromException<RystemLoopbackClient>(error);
 
