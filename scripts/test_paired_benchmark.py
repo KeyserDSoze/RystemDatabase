@@ -23,7 +23,11 @@ from paired_benchmark import (
 def fixtures(repetition: int = 0) -> tuple[list[dict], list[dict]]:
     rust = [json.loads(x) for x in rystem_sample().splitlines()]
     sqlite = sqlite_sample()
-    sqlite[0].update({"records": 4, "operations": 7, "payload_bytes": 128})
+    sqlite[0].update({
+        "records": 4, "operations": 7, "payload_bytes": 128,
+        "read_cache": "warmed",
+    })
+    rust[0]["read_cache"] = "warmed"
     for m in sqlite[1:-1]:
         m["count"] = 1 if m["name"] == "reopen_replay" else (
             4 if m["name"] in {"put_sync", "delete_sync"} else 7
