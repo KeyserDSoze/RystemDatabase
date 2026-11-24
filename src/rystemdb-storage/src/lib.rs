@@ -1278,7 +1278,8 @@ mod indexed_reader_fast_path_tests {
         ));
         // A file outside the storage writer's lock is sufficient to exercise
         // the private frame reader using a real CRC-encoded PUT.
-        let bytes = frame_put("key", &Value::Integer(13)).unwrap();
+        let encoded = encode(&Value::Integer(13)).unwrap();
+        let bytes = frame("key", Some(&encoded)).unwrap();
         let path = root.with_extension("rdb");
         std::fs::write(&path, &bytes).unwrap();
         let mut file = File::open(&path).unwrap();
