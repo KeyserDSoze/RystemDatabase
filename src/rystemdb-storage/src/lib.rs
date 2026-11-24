@@ -1263,3 +1263,37 @@ mod tests {
         assert_eq!(parse_segment_name("segment-00000001.rdb.bak"), None);
     }
 }
+
+// #97 TDD RED: helper missing until implementation. Production indexed
+// reads must validate every frame exactly as replay does, but not fstat.
+#[cfg(test)]
+mod indexed_reader_fast_path_tests {
+    use super::*;
+    use std::fs::OpenOptions;
+
+    #[test]
+    fn red_indexed_verified_read_accepts_complete_frame_and_rejects_short_header() {
+        let root = std::env::temp_dir().join(format!(
+            "rystem-indexed-reader-unit-{}", std::process::id()
+        ));
+        // A file outside the storage writer's lock is sufficient to exercise
+        // the private frame reader using a real CRC-encoded PUT.
+        let bytes = frame_put("key", &Value::Integer(13)).unwrap();
+        let path = root.with_extension("rdb");
+        std::fs::write(&path, &bytes).unwrap();
+        let mut file = File::open(&path).unwrap();
+        assert!(matches!(
+            read_frame_indexed(&mut file, 0).unwrap(),
+            FrameRead::Complete { id, value: Some(Value::Integer(13)), .. } if id == "key"
+        ));
+        drop(file);
+        OpenOptions::new().write(true).open(&path).unwrap().set_len(5).unwrap();
+        let mut file = File::open(&path).unwrap();
+        assert!(matches!(
+            read_frame_indexed(&mut file, 0),
+            Err(StoreError::Corrupt(_))
+        ));
+        drop(file);
+        std::fs::remove_file(path).unwrap();
+    }
+}
