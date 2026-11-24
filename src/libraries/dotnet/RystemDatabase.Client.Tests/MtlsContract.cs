@@ -33,8 +33,17 @@ internal static class MtlsContract
         }
     }
 
-    // RED placeholder: configuration is not implemented yet.
-    private static int ParseDenialRounds(string? configured) => 1;
+    private static int ParseDenialRounds(string? configured)
+    {
+        if (configured is null) return 1;
+        if (configured.Length is < 1 or > 2 || configured[0] == '0' ||
+            configured.Any(c => c is < '0' or > '9') ||
+            !int.TryParse(configured, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out int count) ||
+            count is < 1 or > 20)
+            throw new ArgumentException("RYSTEMDB_MTLS_DENIAL_ROUNDS must be an integer from 1 to 20");
+        return count;
+    }
 
     // #98: deterministic negative-contract checks, independent of TLS/platform.
     public static async Task RunDenialAssertionsAsync()
@@ -88,15 +97,11 @@ internal static class MtlsContract
 
     public static async Task RunAsync(string binary)
     {
+        int rounds = ParseDenialRounds(Environment.GetEnvironmentVariable("RYSTEMDB_MTLS_DENIAL_ROUNDS"));
         using var test = new Fixture();
         await using var server = await test.StartAsync(binary);
         var root = test.ServerRoot;
         var writer = test.Writer;
-
-        // Missing client certificate must never authenticate just with a token.
-        await DeniedConnectAsync(() => RystemLoopbackClient.ConnectTlsAsync(
-            IPAddress.Loopback, server.Port, "localhost", root, WriterToken),
-            "mTLS server accepted bearer token alone");
 
         // The real .NET SslStream must present the offered signed client
         // identity; never infer authorization from the 32-byte token alone.
@@ -106,17 +111,30 @@ internal static class MtlsContract
                 serverName, ca ?? root, identity.Certificate, identity.PrivateKey,
                 token ?? WriterToken);
 
-        await DeniedConnectAsync(() => Connect(test.WrongIssuer), "untrusted client issuer");
-        await DeniedConnectAsync(() => Connect(test.WrongEku), "wrong clientAuth EKU");
-        await DeniedConnectAsync(() => Connect(test.Stranger), "unknown verified URI SAN principal");
-        await DeniedConnectAsync(() => Connect(writer, WrongToken),
-            "disjoint bearer token/identity grants", requireHelloStatus: true);
-        await DeniedConnectAsync(() => Connect(writer, new byte[32]),
-            "invalid bearer token", requireHelloStatus: true);
-        await DeniedConnectAsync(() => Connect(writer, serverName:"not-localhost.test"),
-            "incorrect server SAN hostname");
-        await DeniedConnectAsync(() => Connect(writer, ca:test.WrongServerRoot),
-            "untrusted server issuer");
+        // #99: each round makes fresh connections. Stop on the first
+        // unexpected outcome; repeating the workload is not a retry.
+        for (int round = 1; round <= rounds; round++)
+        {
+            Console.WriteLine($"mTLS denial round {round}/{rounds}: START");
+            // Missing client certificate must never authenticate just with a token.
+            await DeniedConnectAsync(() => RystemLoopbackClient.ConnectTlsAsync(
+                IPAddress.Loopback, server.Port, "localhost", root, WriterToken),
+                "mTLS server accepted bearer token alone");
+            await DeniedConnectAsync(() => Connect(test.WrongIssuer), "untrusted client issuer");
+            await DeniedConnectAsync(() => Connect(test.WrongEku), "wrong clientAuth EKU");
+            await DeniedConnectAsync(() => Connect(test.Stranger), "unknown verified URI SAN principal");
+            await DeniedConnectAsync(() => Connect(writer, WrongToken),
+                "disjoint bearer token/identity grants", requireHelloStatus: true);
+            await DeniedConnectAsync(() => Connect(writer, new byte[32]),
+                "invalid bearer token", requireHelloStatus: true);
+            await DeniedConnectAsync(() => Connect(writer, serverName:"not-localhost.test"),
+                "incorrect server SAN hostname");
+            await DeniedConnectAsync(() => Connect(writer, ca:test.WrongServerRoot),
+                "untrusted server issuer");
+            await using (var healthy = await Connect(writer))
+                await healthy.PingAsync();
+            Console.WriteLine($"mTLS denial round {round}/{rounds}: PASS");
+        }
 
         // #69: malformed/bad-pair client credentials must be rejected before
         // any TCP connect, so use a deliberately closed port 1 for these.
