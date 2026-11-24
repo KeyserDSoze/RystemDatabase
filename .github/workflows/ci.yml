@@ -61,6 +61,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/check_storage_benchmark.py --self-test
+          # #96 TDD RED first: paired repeated native A/B harness is missing.
+          python3 scripts/test_paired_benchmark.py
           # #92 TDD RED first: SQLite comparator/fixture contract must exist.
           python3 scripts/test_sqlite_benchmark.py
           # Rust runs the actual typed corpus; fixture export is pre-timing,
