@@ -92,6 +92,25 @@ jobs:
           python3 scripts/check_native_sqlite_benchmark.py \
             --native-report sqlite-rust-benchmark.ndjson \
             --rystem-report storage-benchmark.ndjson
+      - name: Five paired alternating native benchmark runs (#96)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Each executable has ALREADY been compiled in --release mode.
+          # New on-disk DB per invocation; no compilation in measured loops.
+          # This is shared-runner diagnostic data, NOT a dedicated-host SLA.
+          python3 scripts/paired_benchmark.py \
+            --rystem-bin target/release/examples/bench_storage \
+            --sqlite-bin benchmarks/sqlite-native/target/release/rystemdb-bench-sqlite \
+            --out-dir paired-benchmark \
+            --repetitions 5 --seed 42 \
+            --records 32 --operations 64 --payload-bytes 64
+          # Fail closed if aggregate or any raw trial is missing.
+          test -s paired-benchmark/summary.ndjson
+          test -s paired-benchmark/fixture.ndjson
+          test "$(find paired-benchmark -maxdepth 1 -name 'rystem-[0-9][0-9].ndjson' | wc -l)" -eq 5
+          test "$(find paired-benchmark -maxdepth 1 -name 'sqlite-native-[0-9][0-9].ndjson' | wc -l)" -eq 5
       - name: Preserve raw per-commit storage benchmark sample (#88)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -102,6 +121,7 @@ jobs:
             storage-fixture.ndjson
             sqlite-benchmark.ndjson
             sqlite-rust-benchmark.ndjson
+            paired-benchmark/
           if-no-files-found: error
           retention-days: 14
   npm:
