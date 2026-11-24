@@ -14,8 +14,58 @@ internal static class MtlsContract
 
     private sealed record Identity(string Certificate, string PrivateKey);
 
+    // #98: deterministic negative-contract checks, independent of TLS/platform.
+    public static async Task RunDenialAssertionsAsync()
+    {
+        static Func<Task<RystemLoopbackClient>> Fault(Exception error)
+            => () => Task.FromException<RystemLoopbackClient>(error);
+
+        static async Task MustPropagateAsync(Exception error, bool requireHelloStatus)
+        {
+            try
+            {
+                await DeniedConnectAsync(Fault(error), "synthetic rejection",
+                    requireHelloStatus);
+            }
+            catch (Exception observed) when (ReferenceEquals(observed, error))
+            {
+                return;
+            }
+            throw new Exception("Negative mTLS assertion accepted an unrelated failure");
+        }
+
+        await DeniedConnectAsync(Fault(new RystemRpcException(6)),
+            "synthetic explicit Unauthorized", requireHelloStatus: true);
+        await DeniedConnectAsync(Fault(new AuthenticationException()),
+            "synthetic TLS rejection");
+        foreach (bool requireHelloStatus in new[] { false, true })
+        {
+            await MustPropagateAsync(new RystemRpcException(5), requireHelloStatus);
+            await MustPropagateAsync(new OperationCanceledException(), requireHelloStatus);
+            await MustPropagateAsync(new InvalidDataException(), requireHelloStatus);
+            try
+            {
+                // A null stand-in avoids constructing a real network client;
+                // the successful task must still be rejected by the assertion.
+                await DeniedConnectAsync(() => Task.FromResult<RystemLoopbackClient>(null!),
+                    "synthetic unexpected success", requireHelloStatus);
+            }
+            catch (InvalidOperationException)
+            {
+                continue;
+            }
+            throw new Exception("Negative mTLS assertion accepted successful connection");
+        }
+        await MustPropagateAsync(new IOException(), true);
+        await MustPropagateAsync(new AuthenticationException(), true);
+        await MustPropagateAsync(new System.Net.Sockets.SocketException(
+            (int)System.Net.Sockets.SocketError.ConnectionRefused), true);
+        Console.WriteLine("Rystem .NET mTLS denial assertion contract: PASS");
+    }
+
     public static async Task RunAsync(string binary)
     {
+        await RunDenialAssertionsAsync();
         using var test = new Fixture();
         await using var server = await test.StartAsync(binary);
         var root = test.ServerRoot;
@@ -119,7 +169,7 @@ internal static class MtlsContract
     }
 
     private static async Task DeniedConnectAsync(
-        Func<Task<RystemLoopbackClient>> connect, string reason)
+        Func<Task<RystemLoopbackClient>> connect, string reason, bool requireHelloStatus = false)
     {
         try
         {
