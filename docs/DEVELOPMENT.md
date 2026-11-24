@@ -18,6 +18,32 @@ docker build -f docker/Dockerfile -t rystemdb:local .
 
 Checks now cover the nested binary codec, persistent document CLI, append-only storage, process crash simulations, and synthetic I/O errors.
 
+## Alternating five-run Rystem–SQLite A/B performance regression (#96)
+
+```sh
+cargo build --release --locked -p rystemdb-storage --example bench_storage
+cargo build --release --locked --manifest-path benchmarks/sqlite-native/Cargo.toml
+python3 scripts/test_paired_benchmark.py
+python3 scripts/paired_benchmark.py \
+  --rystem-bin target/release/examples/bench_storage \
+  --sqlite-bin benchmarks/sqlite-native/target/release/rystemdb-bench-sqlite \
+  --out-dir paired-benchmark --repetitions 5 --seed 42 \
+  --records 32 --operations 64 --payload-bytes 64
+```
+
+The #96 stdlib regression suite verifies deterministic balanced
+alternation, >=5 repetitions, fail-closed metadata and output
+validation, sample medians and min/max spans, plus the explicit
+non-equivalence of Rystem outer-CRC typed GET and SQLite typed GET.
+A Linux-only post-build CI step executes five **fresh-database**
+repetitions of each native **release** binary with a single
+SHA-256-pinned RDB fixture. Each per-run NDJSON and the final
+`paired-benchmark/summary.ndjson` are included in the SHA-scoped
+CI artifact, with no hard milliseconds thresholds. This is
+shared-host diagnostic telemetry, not the dedicated machine/CPU/cache
+controls needed to close #93 or justify a database speed ranking.
+See [PERFORMANCE.md](PERFORMANCE.md).
+
 ## Native Rust SQLite typed-decode comparator (#94)
 
 ```sh

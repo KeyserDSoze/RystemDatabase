@@ -10,8 +10,10 @@ Rystem Database follows the top-level structure of [TemporalMark](https://github
 
 The storage crate now has an opt-in deterministic release benchmark for
 PUT/GET/UPDATE/DELETE, snapshots, staged atomic batches and restart
-latency. CI publishes **raw per-commit p50/p95/p99 telemetry**, without
-brittle millisecond thresholds on shared runners. Follow
+latency. CI publishes **raw per-commit p50/p95/p99 telemetry**, including
+five alternating-order fresh-database paired Rystem/SQLite runs
+and median-of-run statistics, without brittle millisecond thresholds
+on shared runners. Follow
 [the performance methodology](docs/PERFORMANCE.md) for exact commands,
 early exploratory results, the SQLite WAL/FULL fixture-matched baselines: Python raw-BLOB
 and an **isolated native Rust typed-RDB SQLite driver**, both explicitly

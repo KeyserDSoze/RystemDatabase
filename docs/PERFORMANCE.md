@@ -118,6 +118,96 @@ repeatable performance baselines. **Only correctness, schema,
 nonempty samples and bounded input are CI pass/fail conditions. There is
 no absolute millisecond gate** to produce spurious red CI on noisy hosts.
 
+## Five fresh-database alternating-order native benchmark repetitions (#96)
+
+Child [#96](https://github.com/KeyserDSoze/RystemDatabase/issues/96) provides a
+**Python-stdlib-only orchestrator** for the already compiled Rust
+Rystem and standalone native Rust SQLite benchmark executables.
+It validates the fixture and individual reports **before** computing
+any results; no timings of compilation or the initial fixture export
+enter either engine's five measured repetitions.
+
+```sh
+cargo build --release --locked -p rystemdb-storage --example bench_storage
+cargo build --release --locked --manifest-path benchmarks/sqlite-native/Cargo.toml
+python3 scripts/test_paired_benchmark.py
+python3 scripts/paired_benchmark.py \
+  --rystem-bin target/release/examples/bench_storage \
+  --sqlite-bin benchmarks/sqlite-native/target/release/rystemdb-bench-sqlite \
+  --out-dir paired-benchmark \
+  --repetitions 5 --seed 42 \
+  --records 32 --operations 64 --payload-bytes 64
+```
+
+The runner first creates exactly one **uncounted** Rystem fixture,
+records its SHA-256 and validates its metadata. Each measured Rystem
+run then creates **its own fresh RYSF database**, and each native SQLite
+run creates **its own fresh WAL/FULL database**, all consuming the
+same fixture seed, record count, key order and typed RDB values.
+The first engine alternates between Rystem and SQLite, deterministic
+from the seed: Rystem/SQLite, SQLite/Rystem, Rystem/SQLite,
+SQLite/Rystem, Rystem/SQLite for five iterations and seed 42.
+Other seeds reverse the starting order. A fixed sequence and a
+new database root do **not** imply independent cold OS page cache.
+
+The report validator checks every run's schema, typed RDB integrity
+disclosure, sample count, seed, cardinality, payload size, engine
+versions and OS/architecture. Any mismatch, malformed payload,
+timeout or failed process makes the entire job fail with no successful
+aggregate. All **10 raw measured reports**, the source RDB fixture
+and the uncounted preflight report are retained separately. A final
+`paired-benchmark/summary.ndjson` contains run order and a
+**median of five per-run p50, p95 and p99 statistics**, together
+with min/max across those five run statistics. The values are not
+percentiles of pooled observations, confidence bounds, or guarantees
+for future requests. Host/kernel, logical CPU count, SHA, engine
+versions, payload, fixture hash and cache/durability/integrity
+limitations are reported. There are no hard CI millisecond thresholds
+and no cross-engine "winner" field.
+
+### First actual five-run observation (shared Linux CI, not a ranking)
+
+The first complete source+CI sample is
+[CI #45408743006](https://github.com/KeyserDSoze/RystemDatabase/actions/runs/45408743006),
+code SHA `e25ad2640a5853cfbd85ecff8fed87bb55483bc0`,
+artifact `storage-benchmark-e25ad2640a5853cfbd85ecff8fed87bb55483bc0`
+(ID **14926493839**). The Linux x86_64 hosted runner reported
+kernel `7.0.0-1020-azure`, 4 logical CPUs, seed 42,
+32 initial documents, 64 measured operations per repeat,
+64-byte binary field, Rystem v0.1.2, bundled SQLite 3.50.2.
+The engine order alternated five times with no hidden retries.
+All values are **medians of the run-level p50 in milliseconds**
+rather than a pooled p50.
+
+| Scenario | Rystem median p50 (ms) | SQLite native median p50 (ms) | Rystem range of run p50 (ms) | SQLite range of run p50 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Synced PUT | 0.218209 | 0.268305 | 0.204378–0.220382 | 0.256387–0.274144 |
+| Synced UPDATE | 0.213652 | 0.255395 | 0.206632–0.217438 | 0.247934–0.262756 |
+| Synced DELETE | 0.208174 | 0.246132 | 0.202336–0.217257 | 0.242095–0.251529 |
+| Two-key atomic commit | 0.217228 | 0.255526 | 0.206331–0.225270 | 0.252862–0.256006 |
+| Warm typed GET | 0.005969 | 0.002544 | 0.005919–0.006179 | 0.002504–0.002674 |
+
+The corresponding **median of run-level p99** (Rystem vs SQLite)
+was 0.377299 vs 0.478672 ms for PUT, 0.440414 vs 0.459674
+ms for UPDATE, 0.413494 vs 0.488927 ms for DELETE,
+0.407525 vs 0.435857 ms for two-key commit, and 0.006459
+vs 0.002914 ms for GET. All individual samples and other
+operations remain in the archived NDJSON reports.
+
+**Limitations:** this is a shared, non-CPU-pinned GitHub host,
+with non-controlled OS page cache and possible background I/O.
+Five repetitions reduce order sensitivity but do not make these
+results equivalent to five experiments on a reserved machine.
+The two-key Rystem workload includes staging while SQLite's
+two-row transaction uses a different API, and Rystem GET verifies
+an additional full outer **RYSF CRC** unavailable in SQLite.
+Their on-disk formats, compression/indexing and sync protocols
+also differ. Neither a durable performance SLA nor an assertion
+that Rystem is the "fastest database in the world" is established.
+Parent #93 remains **OPEN** for dedicated-host, controlled cache,
+real concurrency, 1K/100K/1M datasets, resource profiling and
+integrity parity. Parents #89/#12 remain OPEN for other engines.
+
 ## Native Rust SQLite typed-RDB comparison (#94; child of #93)
 
 The follow-up to #92 adds an **isolated** `benchmarks/sqlite-native`
