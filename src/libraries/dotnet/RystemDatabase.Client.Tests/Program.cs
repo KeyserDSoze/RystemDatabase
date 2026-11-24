@@ -183,6 +183,9 @@ Check(RystemRdbCodec.Encode(RystemRdbCodec.Decode(RystemRdbCodec.Encode(bomTyped
     .AsSpan().SequenceEqual(RystemRdbCodec.Encode(bomTyped)),
     "C# typed codec must preserve UTF-8 U+FEFF scalar in data");
 
+// #98: exercise the denial assertion even without the native Rust binary.
+await MtlsContract.RunDenialAssertionsAsync();
+
 if (args.Length > 0)
 {
     await LiveContract.RunAsync(args[0]);
